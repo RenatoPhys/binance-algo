@@ -1,0 +1,10 @@
+universe:
+  seed_symbols:
+    - BTCUSDT
+    - ETHUSDT
+    - SOLUSDT
+  quote_asset: USDT
+  contract_type: PERPETUAL
+  require_status: TRADING
+  minimum_listing_days: 90
+  maximum_symbols: 10

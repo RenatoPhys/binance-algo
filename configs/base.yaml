@@ -1,0 +1,47 @@
+app:
+  environment: local
+  log_level: INFO
+  timezone: UTC
+
+binance:
+  market: usdm_futures
+  authenticated_environment: demo
+  rest_base_url: https://demo-fapi.binance.com
+  market_ws_base_url: wss://demo-fstream.binance.com
+  websocket_api_url: wss://testnet.binancefuture.com/ws-fapi/v1
+  recv_window_ms: 5000
+  request_timeout_seconds: 10.0
+  retry_max_attempts: 3
+  retry_base_seconds: 0.25
+  reconnect_max_seconds: 60.0
+  clock_max_offset_ms: 1000
+
+storage:
+  root: var/data
+  state_db: var/state/ingestion.sqlite3
+  parquet_compression: zstd
+  micro_batch_max_rows: 25000
+  micro_batch_max_seconds: 30
+
+universe:
+  seed_symbols:
+    - BTCUSDT
+    - ETHUSDT
+    - SOLUSDT
+  quote_asset: USDT
+  contract_type: PERPETUAL
+  require_status: TRADING
+  minimum_listing_days: 90
+  maximum_symbols: 10
+
+streams:
+  book_ticker: true
+  aggregate_trades: true
+  mark_price: true
+  kline_1m: true
+  depth: false
+
+safety:
+  live_trading: false
+  allow_order_submission: false
+  max_order_notional_usdt: 0

@@ -1,0 +1,9 @@
+services:
+  binance-algo:
+    build: .
+    environment:
+      LIVE_TRADING: "false"
+      ALLOW_ORDER_SUBMISSION: "false"
+    volumes:
+      - ./var:/app/var
+    command: ["doctor"]

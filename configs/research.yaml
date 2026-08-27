@@ -1,0 +1,7 @@
+app:
+  environment: research
+
+safety:
+  live_trading: false
+  allow_order_submission: false
+  max_order_notional_usdt: 0

@@ -1,0 +1,11 @@
+app:
+  environment: demo
+
+binance:
+  authenticated_environment: demo
+  rest_base_url: https://demo-fapi.binance.com
+
+safety:
+  live_trading: false
+  allow_order_submission: false
+  max_order_notional_usdt: 0

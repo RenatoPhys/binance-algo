@@ -1,0 +1,64 @@
+{
+  "timezone": "UTC",
+  "serverTime": 1787873855926,
+  "futuresType": "U_MARGINED",
+  "symbols": [
+    {
+      "symbol": "BTCUSDT",
+      "pair": "BTCUSDT",
+      "contractType": "PERPETUAL",
+      "status": "TRADING",
+      "baseAsset": "BTC",
+      "quoteAsset": "USDT",
+      "marginAsset": "USDT",
+      "onboardDate": 1569398400000,
+      "deliveryDate": 4133404802000,
+      "pricePrecision": 2,
+      "quantityPrecision": 4,
+      "filters": [
+        {"filterType": "PRICE_FILTER", "minPrice": "261.10", "maxPrice": "809484", "tickSize": "0.10"},
+        {"filterType": "LOT_SIZE", "minQty": "0.0001", "maxQty": "1000", "stepSize": "0.0001"},
+        {"filterType": "MARKET_LOT_SIZE", "minQty": "0.0001", "maxQty": "120", "stepSize": "0.0001"},
+        {"filterType": "MAX_NUM_ORDERS", "limit": 10000},
+        {"filterType": "MIN_NOTIONAL", "notional": "50"},
+        {"filterType": "PERCENT_PRICE", "multiplierUp": "1.0500", "multiplierDown": "0.9500", "multiplierDecimal": "4"}
+      ]
+    },
+    {
+      "symbol": "ETHUSDT",
+      "pair": "ETHUSDT",
+      "contractType": "PERPETUAL",
+      "status": "TRADING",
+      "baseAsset": "ETH",
+      "quoteAsset": "USDT",
+      "marginAsset": "USDT",
+      "onboardDate": 1569398400000,
+      "deliveryDate": 4133404802000,
+      "pricePrecision": 2,
+      "quantityPrecision": 3,
+      "filters": [
+        {"filterType": "PRICE_FILTER", "minPrice": "39.86", "maxPrice": "306177", "tickSize": "0.01"},
+        {"filterType": "LOT_SIZE", "minQty": "0.001", "maxQty": "10000", "stepSize": "0.001"},
+        {"filterType": "MIN_NOTIONAL", "notional": "20"}
+      ]
+    },
+    {
+      "symbol": "SOLUSDT",
+      "pair": "SOLUSDT",
+      "contractType": "PERPETUAL",
+      "status": "TRADING",
+      "baseAsset": "SOL",
+      "quoteAsset": "USDT",
+      "marginAsset": "USDT",
+      "onboardDate": 1569398400000,
+      "deliveryDate": 4133404802000,
+      "pricePrecision": 4,
+      "quantityPrecision": 2,
+      "filters": [
+        {"filterType": "PRICE_FILTER", "minPrice": "0.4200", "maxPrice": "6857", "tickSize": "0.0100"},
+        {"filterType": "LOT_SIZE", "minQty": "0.01", "maxQty": "1000000", "stepSize": "0.01"},
+        {"filterType": "MIN_NOTIONAL", "notional": "5"}
+      ]
+    }
+  ]
+}
