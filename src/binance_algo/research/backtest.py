@@ -16,6 +16,7 @@ import polars as pl
 from binance_algo.common.errors import ResearchError
 from binance_algo.config import ResearchConfig
 from binance_algo.data.storage import LocalFilesystemStorage
+from binance_algo.research.visualization import PNL_VISUALIZATION_VERSION, render_pnl_svg
 
 HOURS_PER_YEAR = 24 * 365
 
@@ -70,6 +71,7 @@ class ResearchBacktestResult:
     curve_path: str
     report_json_path: str
     report_markdown_path: str
+    report_chart_path: str
     metrics: PerformanceMetrics
     fold_count: int
     stress: dict[str, dict[str, float | int]]
@@ -527,6 +529,8 @@ def run_and_persist_backtest(
     )
     regimes = _regime_metrics(baseline.curve)
     run_payload = {
+        "report_schema_version": 2,
+        "pnl_visualization_version": PNL_VISUALIZATION_VERSION,
         "dataset_path": str(dataset_path.resolve()),
         "research_config": config.model_dump(mode="json"),
         "folds": [asdict(fold) for fold in baseline.folds],
@@ -550,6 +554,8 @@ def run_and_persist_backtest(
     reports_storage = LocalFilesystemStorage(reports_root)
     report_json = reports_storage.path(f"research_phase3_{run_version}.json")
     report_markdown = reports_storage.path(f"research_phase3_{run_version}.md")
+    report_chart = reports_storage.path(f"research_phase3_{run_version}_pnl.svg")
+    reports_storage.write_bytes_atomic(report_chart, render_pnl_svg(baseline.curve).encode("utf-8"))
     reports_storage.write_json_atomic(
         report_json,
         {
@@ -559,6 +565,7 @@ def run_and_persist_backtest(
             "funding_model": "events in (entry, exit], positive rate paid by long positions",
             "universe_model": "fixed BTCUSDT/ETHUSDT/SOLUSDT seed chosen ex ante",
             "curve_path": str(curve_path),
+            "report_chart_path": str(report_chart),
             **run_payload,
         },
     )
@@ -567,6 +574,8 @@ def run_and_persist_backtest(
         "# Phase 3 research report",
         "",
         "> This fixed baseline validates the pipeline. It is not a claim of tradable edge.",
+        "",
+        f"![Out-of-sample P&L curve]({report_chart.name})",
         "",
         "## Protocol",
         "",
@@ -628,6 +637,7 @@ def run_and_persist_backtest(
         curve_path=str(curve_path),
         report_json_path=str(report_json),
         report_markdown_path=str(report_markdown),
+        report_chart_path=str(report_chart),
         metrics=metrics,
         fold_count=len(baseline.folds),
         stress=stress,

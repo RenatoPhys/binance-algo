@@ -7,6 +7,7 @@ import polars as pl
 
 from binance_algo.config import load_settings
 from binance_algo.research.backtest import run_walk_forward
+from binance_algo.research.visualization import render_pnl_svg
 
 PROJECT_ROOT = Path(__file__).parents[2]
 BASE_CONFIG = PROJECT_ROOT / "configs" / "base.yaml"
@@ -65,3 +66,11 @@ def test_walk_forward_is_temporal_costed_and_accounting_balances() -> None:
     assert baseline.curve["net_exposure"].abs().max() <= 1e-12
     assert expensive.metrics.total_return < baseline.metrics.total_return
     assert not delayed.curve["net_return"].equals(baseline.curve["net_return"])
+
+    svg = render_pnl_svg(baseline.curve)
+    assert svg.startswith('<svg xmlns="http://www.w3.org/2000/svg"')
+    assert "Equity OOS" in svg
+    assert "Drawdown líquido" in svg
+    assert "Decomposição acumulada" in svg
+    assert svg.count("<polyline") == 7
+    assert all(f"fold {number}" in svg for number in range(1, len(baseline.folds) + 1))
