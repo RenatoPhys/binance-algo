@@ -9,6 +9,10 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from binance_algo.common.errors import ResearchError
 from binance_algo.research.portfolio.base import PortfolioPolicy
+from binance_algo.research.portfolio.directional import (
+    BufferedDirectionalParameters,
+    BufferedDirectionalPolicy,
+)
 from binance_algo.research.portfolio.neutral_long_short import (
     BufferedNeutralLongShortParameters,
     BufferedNeutralLongShortPolicy,
@@ -29,6 +33,16 @@ class NeutralLongShortSpec(BaseModel):
 class BufferedNeutralLongShortSpec(NeutralLongShortSpec):
     rebalance_interval_hours: int = Field(ge=1, le=24 * 30)
     minimum_score_spread: float = Field(default=0.0, ge=0)
+
+
+class BufferedDirectionalSpec(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    signal_threshold: float = Field(ge=0, le=1)
+    rebalance_interval_hours: int = Field(ge=1, le=24 * 30)
+    gross_exposure: float = Field(gt=0, le=1)
+    annual_volatility_target: float = Field(gt=0, le=1)
+    max_symbol_weight: float = Field(gt=0, le=1)
 
 
 PortfolioPolicyFactory = Callable[[Mapping[str, Any]], PortfolioPolicy]
@@ -54,7 +68,19 @@ def build_buffered_neutral_long_short(
         raise ResearchError(f"invalid buffered_neutral_long_short parameters: {exc}") from exc
 
 
+def build_buffered_directional(parameters: Mapping[str, Any]) -> BufferedDirectionalPolicy:
+    try:
+        parsed = BufferedDirectionalSpec.model_validate(dict(parameters))
+        return BufferedDirectionalPolicy(
+            parameters=BufferedDirectionalParameters(**parsed.model_dump())
+        )
+    except (TypeError, ValueError, ResearchError) as exc:
+        raise ResearchError(f"invalid buffered_directional parameters: {exc}") from exc
+
+
 PORTFOLIO_POLICY_FACTORIES: dict[tuple[str, str], PortfolioPolicyFactory] = {
+    ("buffered_directional", "1"): build_buffered_directional,
+    ("buffered_directional", "v1"): build_buffered_directional,
     ("buffered_neutral_long_short", "1"): build_buffered_neutral_long_short,
     ("buffered_neutral_long_short", "v1"): build_buffered_neutral_long_short,
     ("neutral_long_short", "1"): build_neutral_long_short,
@@ -76,9 +102,11 @@ def build_portfolio_policy(
 
 __all__ = [
     "PORTFOLIO_POLICY_FACTORIES",
+    "BufferedDirectionalSpec",
     "BufferedNeutralLongShortSpec",
     "NeutralLongShortSpec",
     "PortfolioPolicyFactory",
+    "build_buffered_directional",
     "build_buffered_neutral_long_short",
     "build_neutral_long_short",
     "build_portfolio_policy",

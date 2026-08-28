@@ -1,0 +1,27 @@
+hypothesis_id: HYP-DIRECTIONAL-SMA-TREND-0001
+title: Absolute multi-day SMA trends may diversify market-neutral funding carry
+mechanism: >-
+  A 24-hour versus 168-hour causal SMA measures the absolute trend of each asset rather than its
+  rank against the other assets. Long positions follow positive trends and short positions follow
+  negative trends. Inverse-volatility sizing and multi-day rebalance buffers should control risk
+  and turnover while retaining directional persistence.
+expected_direction: long positive individual trends and short negative individual trends
+expected_horizon: 24h to 168h holding intervals with hourly mark-to-market
+target_universe: fixed point-in-time BTCUSDT, ETHUSDT and SOLUSDT research universe
+preregistered_success_criteria:
+  development_end: "2024-08-27"
+  development_net_total_return_min: "0.0"
+  development_net_sharpe_min: "0.5"
+  development_cost_1_5x_total_return_min: "0.0"
+  development_signal_delay_total_return_min: "0.0"
+  development_abs_correlation_to_funding_carry_max: "0.75"
+  final_oos_days: 728
+  final_net_total_return_min: "0.0"
+  final_net_sharpe_min: "0.5"
+  final_cost_1_5x_total_return_min: "0.0"
+  promotion_allowed: false
+status: READY
+notes: >-
+  The 24h/168h SMA pair is fixed before this screen. Only three holding intervals and two minimum
+  signal strengths are varied. At most one development candidate may be frozen for the untouched
+  final OOS; failure promotes no candidate.
