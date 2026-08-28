@@ -44,6 +44,12 @@ ACCOUNTING_METADATA_FIELDS = (
 ACCOUNTING_FIELDS = ("rolling_beta", *ACCOUNTING_OUTCOME_FIELDS, *ACCOUNTING_METADATA_FIELDS)
 
 
+def _metadata_not_requested_as_features(
+    feature_columns: tuple[str, ...],
+) -> tuple[str, ...]:
+    return tuple(name for name in ACCOUNTING_METADATA_FIELDS if name not in feature_columns)
+
+
 @dataclass(frozen=True, slots=True)
 class WalkForwardFold:
     fold: int
@@ -493,15 +499,14 @@ def run_walk_forward(
     if signal_delay_bars < 0:
         raise ResearchError("signal delay cannot be negative")
     if panel_data is None:
+        feature_columns = tuple(
+            dict.fromkeys((*strategy.required_features(), *portfolio_policy.required_features()))
+        )
         panel_data = PanelData.from_frame(
             frame,
-            feature_columns=tuple(
-                dict.fromkeys(
-                    (*strategy.required_features(), *portfolio_policy.required_features())
-                )
-            ),
+            feature_columns=feature_columns,
             outcome_columns=ACCOUNTING_OUTCOME_FIELDS,
-            metadata_columns=ACCOUNTING_METADATA_FIELDS,
+            metadata_columns=_metadata_not_requested_as_features(feature_columns),
         )
     panel_data.require_complete(role="walk-forward")
     if frame.height != panel_data.availability.size:
@@ -652,7 +657,7 @@ def run_research_validation(
             frame,
             feature_columns=feature_columns,
             outcome_columns=ACCOUNTING_OUTCOME_FIELDS,
-            metadata_columns=ACCOUNTING_METADATA_FIELDS,
+            metadata_columns=_metadata_not_requested_as_features(feature_columns),
         )
     baseline = run_walk_forward(
         frame,
@@ -756,7 +761,7 @@ def run_and_persist_backtest(
         dataset_path,
         feature_columns=feature_columns,
         outcome_columns=ACCOUNTING_OUTCOME_FIELDS,
-        metadata_columns=ACCOUNTING_METADATA_FIELDS,
+        metadata_columns=_metadata_not_requested_as_features(feature_columns),
     )
     validation = run_research_validation(
         loaded_dataset.frame,
