@@ -1,0 +1,64 @@
+campaign:
+  name: slow_sma_trend_v1_development
+  description: >-
+    Development-only screen ending before the two-year final OOS. Nine multi-day SMA pairs use a
+    fixed daily buffered neutral long-short portfolio. Results select at most one frozen candidate
+    for later confirmation and cannot authorize promotion.
+  hypothesis_id: HYP-SLOW-SMA-TREND-0001
+  artifact_policy: summary
+  max_trials: 9
+
+dataset:
+  manifest: var/data/gold/binance/usdm/research_dataset/version=5f83d3d2f1d74139/dataset.json
+
+feature_set:
+  name: phase3_baseline_features
+  version: "1"
+
+label:
+  name: gross_forward_return_1h
+  version: "1"
+  horizon_minutes: 60
+
+strategy:
+  name: sma_crossover
+  version: "1"
+  fixed: {}
+  grid:
+    fast_window_hours: [12, 24, 48]
+    slow_window_hours: [72, 168, 336]
+
+portfolio:
+  name: buffered_neutral_long_short
+  version: "1"
+  fixed:
+    no_trade_score_band: 1.00
+    rebalance_interval_hours: 24
+    gross_exposure: 0.50
+    annual_volatility_target: 0.15
+    max_symbol_weight: 0.25
+
+execution:
+  name: bar_next_open
+  version: "1"
+  fixed: {}
+
+costs:
+  name: configured_taker
+  version: "1"
+  fixed:
+    cost_multiplier: 1.0
+
+validation:
+  profile: discovery
+  split_plan: expanding_walk_forward_v1
+  train_days: 365
+  test_days: 14
+  embargo_bars: 1
+  stress_cost_multipliers: [1.5]
+  stress_signal_delay_bars: [1]
+
+runner:
+  max_workers: 4
+  fail_fast: false
+  resume: true
