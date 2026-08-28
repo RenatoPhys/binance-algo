@@ -6,7 +6,8 @@ from pathlib import Path
 import polars as pl
 
 from binance_algo.config import load_settings
-from binance_algo.research.backtest import run_walk_forward
+from binance_algo.data.storage import LocalFilesystemStorage
+from binance_algo.research.backtest import run_and_persist_backtest, run_walk_forward
 from binance_algo.research.visualization import render_pnl_svg
 
 PROJECT_ROOT = Path(__file__).parents[2]
@@ -74,3 +75,42 @@ def test_walk_forward_is_temporal_costed_and_accounting_balances() -> None:
     assert "Decomposição acumulada" in svg
     assert svg.count("<polyline") == 7
     assert all(f"fold {number}" in svg for number in range(1, len(baseline.folds) + 1))
+
+
+def test_persisted_pnl_chart_is_opt_in(tmp_path: Path) -> None:
+    settings = load_settings(BASE_CONFIG)
+    config = settings.research.model_copy(
+        update={"walk_forward_train_days": 7, "walk_forward_test_days": 1}
+    )
+    dataset_path = tmp_path / "dataset.parquet"
+    _research_frame().write_parquet(dataset_path)
+    storage = LocalFilesystemStorage(tmp_path / "data")
+    reports_root = tmp_path / "reports"
+
+    default_result = run_and_persist_backtest(
+        dataset_path=dataset_path,
+        storage=storage,
+        reports_root=reports_root,
+        compression="zstd",
+        config=config,
+    )
+    report_before = Path(default_result.report_json_path).read_bytes()
+
+    assert default_result.report_chart_path is None
+    assert not list(reports_root.glob("*_pnl.svg"))
+
+    charted_result = run_and_persist_backtest(
+        dataset_path=dataset_path,
+        storage=storage,
+        reports_root=reports_root,
+        compression="zstd",
+        config=config,
+        generate_chart=True,
+    )
+
+    assert charted_result.run_version == default_result.run_version
+    assert charted_result.curve_path == default_result.curve_path
+    assert Path(charted_result.report_json_path).read_bytes() == report_before
+    assert charted_result.report_chart_path is not None
+    assert Path(charted_result.report_chart_path).is_file()
+    assert len(list(reports_root.glob("*_pnl.svg"))) == 1

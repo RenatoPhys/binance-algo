@@ -643,6 +643,10 @@ def research_backtest(
         Path | None,
         typer.Option(help="Point-in-time dataset Parquet; defaults to the latest local version."),
     ] = None,
+    chart: Annotated[
+        bool,
+        typer.Option("--chart", help="Generate the P&L SVG for this run (disabled by default)."),
+    ] = False,
 ) -> None:
     """Run expanding walk-forward research and all Phase 3 stability scenarios."""
 
@@ -662,6 +666,7 @@ def research_backtest(
             reports_root=settings.reports_root,
             compression=settings.storage.parquet_compression,
             config=settings.research,
+            generate_chart=chart,
         )
     except (BinanceAlgoError, OSError, pl.exceptions.PolarsError) as exc:
         if isinstance(exc, BinanceAlgoError):
@@ -683,13 +688,15 @@ def research_backtest(
     ):
         table.add_row(name, value)
     console.print(table)
-    console.print(
+    output = (
         "Baseline only; no claim of edge.\n"
         f"Run version: {result.run_version}\n"
         f"Curve: {result.curve_path}\n"
-        f"Chart: {result.report_chart_path}\n"
         f"Reports: {result.report_json_path}\n         {result.report_markdown_path}"
     )
+    if result.report_chart_path is not None:
+        output += f"\nChart: {result.report_chart_path}"
+    console.print(output)
 
 
 async def _run_recorder_with_clock(

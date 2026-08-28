@@ -11,8 +11,6 @@ import polars as pl
 
 from binance_algo.common.errors import ResearchError
 
-PNL_VISUALIZATION_VERSION = 1
-
 
 @dataclass(frozen=True, slots=True)
 class PlotSeries:

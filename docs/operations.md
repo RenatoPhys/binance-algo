@@ -79,7 +79,8 @@ uv run binance-algo --config configs/research.yaml research backtest
 O primeiro comando acessa apenas `/fapi/v1/fundingRate`, valida símbolo/range/tipos e recria a
 view `funding_rates`. O segundo falha diante de candle aberto, grid divergente, falta de funding,
 timestamp causal inválido, painel incompleto, duplicata ou feature nula. O terceiro usa o dataset
-mais recente por padrão; passe `--dataset <path>` para fixar uma versão explicitamente.
+mais recente por padrão; passe `--dataset <path>` para fixar uma versão explicitamente. Figuras
+ficam desativadas por padrão; use `research backtest --chart` apenas nas execuções selecionadas.
 
 Antes de interpretar o relatório, confira `accounting_error_max=0`, decomposição de custos,
 turnover e estresses. Resultado líquido positivo não promove estratégia; resultado negativo não
