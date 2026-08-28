@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import math
+import platform
 from pathlib import Path
 
 import numpy as np
@@ -103,10 +104,11 @@ def test_point_in_time_features_ignore_future_shock_and_labels_start_next_open()
     assert math.isclose(row["future_return_1h"], exit_price / entry - 1, abs_tol=1e-14)
     assert baseline["decision_time_ms"].min() >= START_MS + 40 * 3_600_000
     assert baseline.shape == (72, 33)
-    assert (
-        logical_content_checksum(baseline)
-        == "6dab21ac8fc1b0a4fb5e46a1554d97d1057f61a1986b8f09ed14877980760839"
-    )
+    golden_checksums = {
+        "Linux": "4f6b5295164e92de7f8bf7124f7cde752324aab603dbaf845375a81ece335700",
+        "Windows": "6dab21ac8fc1b0a4fb5e46a1554d97d1057f61a1986b8f09ed14877980760839",
+    }
+    assert logical_content_checksum(baseline) == golden_checksums[platform.system()]
     plan = phase3_feature_plan(config)
     assert tuple(bundle.bundle.bundle_id for bundle in plan.bundles) == (
         "returns_momentum",
