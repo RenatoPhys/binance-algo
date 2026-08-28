@@ -55,3 +55,11 @@ class ReplayError(BinanceAlgoError):
 
 class ResearchError(BinanceAlgoError):
     """A point-in-time dataset or research backtest violates its protocol."""
+
+
+class ResearchStoreError(ResearchError):
+    """Research registry state could not be read or changed transactionally."""
+
+
+class InvalidResearchTransition(ResearchStoreError):
+    """A research entity transition violates its explicit state machine."""

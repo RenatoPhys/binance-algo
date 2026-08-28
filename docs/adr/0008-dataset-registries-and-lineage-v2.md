@@ -31,7 +31,7 @@ noção de conteúdo lógico com o arquivo Parquet físico.
   obrigatórios.
 - Identidade deixa de depender da materialização integral do dataframe ou da compressão Parquet.
 - Alterações de fonte, schema, universo, label, feature set ou builder produzem novo dataset.
-- A identidade do experimento ainda é legada e inclui path no PR 3; `ResearchStore` e a identidade
-  canônica entram no PR 4 usando `DatasetReference.identity_payload()`.
+- O adaptador legado ainda calcula sua própria `run_version`, mas a identidade canônica do PR 4
+  usa `DatasetReference.identity_payload()` sem paths; consulte o ADR 0009.
 - Fórmulas e valores financeiros do baseline permanecem iguais; somente metadados de versão do
   dataset mudam no schema v2.

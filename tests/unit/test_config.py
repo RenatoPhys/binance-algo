@@ -31,6 +31,7 @@ def test_default_configuration_is_public_data_only(monkeypatch: pytest.MonkeyPat
     assert settings.research.gross_exposure == Decimal("0.50")
     assert settings.research.fee_schedule.taker_fee_rate == Decimal("0.0005")
     assert settings.data_root == PROJECT_ROOT / "var" / "data"
+    assert settings.research_db_path == PROJECT_ROOT / "var" / "state" / "research.sqlite3"
 
 
 @pytest.mark.parametrize("name", ["LIVE_TRADING", "ALLOW_ORDER_SUBMISSION"])

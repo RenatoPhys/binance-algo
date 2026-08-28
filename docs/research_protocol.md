@@ -51,3 +51,15 @@ barra, duas perturbações de pesos e bootstrap determinístico em blocos de 24 
 
 O resultado real de 90 dias é deliberadamente mantido mesmo sendo negativo. Ele valida que custos
 podem rejeitar a hipótese e não deve ser interpretado como previsão, recomendação ou edge.
+
+## Pré-registro na Fase 3.5
+
+Antes de executar uma nova configuração, registre uma hipótese com mecanismo e critérios de
+sucesso definidos ex ante. Depois componha um `ExperimentSpec` imutável que fixe dataset,
+features, label, strategy, política de portfólio, custos, splits, validação, seed e code
+fingerprint. Alterações nesses elementos criam outro `experiment_id`; um rerun sem alteração cria
+somente outra tentativa.
+
+O PR 4 torna esse contrato persistente e auditável, mas não autoriza sweeps ad hoc. A execução
+pelo registry começa com o experiment runner do PR 5, e campanhas amplas continuam bloqueadas
+até o planner/runner do PR 6.

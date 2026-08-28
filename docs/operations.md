@@ -87,6 +87,35 @@ turnover e estresses. Resultado líquido positivo não promove estratégia; resu
 autoriza tuning na mesma janela. Preserve o JSON e avance qualquer nova hipótese como versão
 distinta de feature/configuração.
 
+## Registry de pesquisa
+
+Inicialize ou migre o banco separado de pesquisa e verifique seus invariantes:
+
+```bash
+uv run binance-algo --config configs/research.yaml research registry init
+uv run binance-algo --config configs/research.yaml research registry status
+uv run binance-algo --config configs/research.yaml research registry migrate
+```
+
+`init` e `migrate` são idempotentes. `status` deve reportar schema 2, WAL e foreign keys ativos e
+os contadores do registry. Os comandos usam `storage.research_db`, cujo default é
+`var/state/research.sqlite3`; esse banco não deve ser substituído pelo manifesto de ingestão.
+
+Registre a hipótese de exemplo e inspecione os registros persistidos:
+
+```bash
+uv run binance-algo --config configs/research.yaml research hypothesis create \
+  --file configs/hypotheses/residual_momentum_slow.yaml
+uv run binance-algo --config configs/research.yaml research hypothesis list
+uv run binance-algo --config configs/research.yaml research hypothesis show HYP-RESMOM-0002
+uv run binance-algo --config configs/research.yaml research feature list
+uv run binance-algo --config configs/research.yaml research feature show rolling_beta:v1
+```
+
+Repetir a criação com conteúdo idêntico não duplica linhas. Alterar uma definição imutável sob o
+mesmo ID falha explicitamente. Não edite o SQLite à mão e não trate a presença de um experimento
+como prova de execução: o artifact pipeline e o experiment runner entram no PR 5.
+
 ## Falhas conhecidas e resposta
 
 - DNS/rede indisponível: o cliente encerra após retries limitados e informa o endpoint.
