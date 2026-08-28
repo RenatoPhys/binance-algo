@@ -1,9 +1,9 @@
 # binance-algo
 
-Infraestrutura auditável para dados públicos da Binance USDⓈ-M Futures. Este primeiro marco
-implementa somente bootstrap, configuração, diagnóstico, REST público, snapshots de
-`exchangeInfo` e construção reproduzível do universo seed. Não há estratégia, WebSocket,
-autenticação, backtest ou envio de ordens.
+Infraestrutura auditável para dados públicos da Binance USDⓈ-M Futures. O data plane atual
+implementa configuração, diagnóstico, REST público, snapshots de `exchangeInfo`, universo seed,
+state store SQLite e backfill idempotente dos arquivos oficiais de klines 1m. Não há estratégia,
+WebSocket, autenticação, backtest ou envio de ordens.
 
 ## Segurança por padrão
 
@@ -20,7 +20,7 @@ para uma fase futura, copie `.env.example` para `.env`; o arquivo local é ignor
 
 - Python 3.12 ou superior (o `uv` pode selecionar/baixar um runtime compatível)
 - [`uv`](https://docs.astral.sh/uv/)
-- Rede liberada para `https://demo-fapi.binance.com` nos comandos públicos
+- Rede liberada para `https://demo-fapi.binance.com` e `https://data.binance.vision`
 
 Docker e GNU Make são opcionais. Todos os comandos do Makefile têm um equivalente `uv` abaixo.
 
@@ -45,6 +45,8 @@ Execute os comandos na raiz do repositório:
 uv run binance-algo doctor
 uv run binance-algo exchange-info snapshot
 uv run binance-algo universe build
+uv run binance-algo backfill klines --symbols BTCUSDT,ETHUSDT,SOLUSDT \
+  --interval 1m --start 2026-08-25 --end 2026-08-25
 ```
 
 Para um cutoff explícito:
@@ -62,11 +64,20 @@ Saídas:
 var/data/raw/binance/usdm/exchange_info/date=YYYY-MM-DD/*.json
 var/data/bronze/binance/usdm/instrument_metadata/date=YYYY-MM-DD/*.parquet
 var/data/gold/binance/usdm/universe/version=<hash>/as_of=YYYY-MM-DD/*
+var/data/raw_archives/binance/usdm/klines/<symbol>/1m/*.zip
+var/data/raw_archives/binance/usdm/klines/<symbol>/1m/*.CHECKSUM
+var/data/raw_archives/binance/usdm/klines/<symbol>/1m/extracted/*.csv
+var/state/ingestion.sqlite3
+var/reports/downloads_*.{json,md}
 ```
 
-Raw e bronze são imutáveis. A escrita passa por arquivo temporário, `fsync`, leitura de
-validação e promoção atômica. O universo grava Parquet e um manifesto JSON com razões de
-inclusão/exclusão.
+Raw e bronze são imutáveis. A escrita passa por arquivo temporário, `fsync`, leitura de validação
+e promoção atômica. Archives exigem SHA-256 oficial, ZIP seguro, CRC, cabeçalho e largura de linha
+válidos antes do estado `VALIDATED`. Downloads parciais usam `.part` e HTTP Range na retomada;
+reruns de arquivos válidos não acessam a rede.
+
+As datas de backfill são dias UTC inclusivos. Como os arquivos diários são publicados no dia
+seguinte, o CLI rejeita datas dentro da janela de publicação configurada.
 
 ## Configuração
 
@@ -87,7 +98,8 @@ uv run pytest -m network
 ```
 
 O job de qualidade exclui esse teste para não transformar indisponibilidade externa em falha de
-contribuição. O comando `doctor`, por outro lado, verifica DNS, ping, server time e clock offset.
+contribuição. O comando `doctor`, por outro lado, verifica DNS, ping, server time, clock offset e
+SQLite em WAL mode.
 
 ## Docker
 
@@ -100,6 +112,6 @@ O volume `./var` preserva datasets locais. A imagem fixa as duas flags de segura
 
 ## Próximo marco
 
-State store SQLite em WAL mode, manifest de arquivos/jobs e downloader idempotente dos arquivos
-oficiais de klines 1m. WebSocket, alpha e execução permanecem fora de escopo até os respectivos
-critérios de qualidade de dados serem satisfeitos.
+Normalizar os CSVs de klines para Parquet canônico, deduplicar, auditar gaps/invariantes e criar
+views DuckDB e relatórios de qualidade. WebSocket, alpha e execução permanecem fora de escopo até
+os respectivos critérios de qualidade de dados serem satisfeitos.

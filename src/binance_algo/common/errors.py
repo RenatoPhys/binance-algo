@@ -19,3 +19,15 @@ class StorageError(BinanceAlgoError):
 
 class UniverseError(BinanceAlgoError):
     """A point-in-time universe could not be built."""
+
+
+class StateStoreError(BinanceAlgoError):
+    """Operational state could not be read or changed transactionally."""
+
+
+class InvalidStateTransition(StateStoreError):
+    """A manifest or job transition violates its state machine."""
+
+
+class ArchiveError(BinanceAlgoError):
+    """An official public archive could not be downloaded or validated."""

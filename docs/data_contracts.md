@@ -31,3 +31,31 @@ filtros.
 Cada símbolo seed gera uma linha com `included`, `reason`, `as_of_ms`,
 `metadata_valid_from_ms` e `universe_version`. O hash inclui cutoff, snapshot, filtros e razões,
 permitindo reprodução e detecção de mudanças.
+
+## data_files — SQLite migration 1
+
+Chave: `file_id`, um SHA-256 determinístico da fonte, mercado, frequência, dataset, símbolo,
+intervalo e dia. `path` também é único.
+
+Campos de lineage incluem dataset, layer, source, janela temporal, row count, schema version,
+checksum, status, ingestion run, pais e último erro. Estados válidos:
+
+```text
+DOWNLOADING -> DOWNLOADED -> VALIDATED -> NORMALIZED -> COMPACTED
+       |             |            |             |
+       +-----------> FAILED / QUARANTINED <-----+
+```
+
+`FAILED` e `QUARANTINED` podem voltar para `DOWNLOADING` por retomada/reparo explícito.
+
+## backfill_jobs — SQLite migration 1
+
+Um job registra símbolos, intervalo, range inclusivo, total, concluídos, falhas e último erro.
+Estados: `PENDING -> RUNNING -> COMPLETED|FAILED`.
+
+## Arquivo oficial de kline 1m
+
+O ZIP e seu `.CHECKSUM` são preservados em `raw_archives`. O ZIP deve conter exatamente um CSV
+flat, sem symlink ou path traversal, com o cabeçalho oficial de 12 colunas. O row count persistido
+é o número de linhas de dados; não se impõe 1.440 para que gaps e dias parciais permaneçam
+observáveis na auditoria seguinte.

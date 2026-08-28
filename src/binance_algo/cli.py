@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import asyncio
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Annotated, NoReturn
 
@@ -13,7 +13,22 @@ from rich.table import Table
 
 from binance_algo.common.errors import BinanceAlgoError
 from binance_algo.config import Settings, load_settings
+from binance_algo.data.archive_client import (
+    ArchiveDownloader,
+    ArchiveDownloadResult,
+    ArchiveTarget,
+    DownloadOutcome,
+)
+from binance_algo.data.backfill import (
+    build_daily_kline_targets,
+    new_backfill_job,
+    parse_date,
+    parse_symbols,
+    write_download_report,
+)
+from binance_algo.data.manifest import BackfillJobRecord, BackfillJobStatus, now_ms
 from binance_algo.data.metadata import MetadataSnapshotService
+from binance_algo.data.state_store import StateStore
 from binance_algo.data.storage import LocalFilesystemStorage
 from binance_algo.data.universe import (
     build_seed_universe,
@@ -28,8 +43,10 @@ from binance_algo.logging import configure_logging, get_logger
 app = typer.Typer(help="Auditable Binance USD-M Futures public-data foundation.")
 exchange_info_app = typer.Typer(help="Snapshot and inspect exchange metadata.")
 universe_app = typer.Typer(help="Build point-in-time research universes.")
+backfill_app = typer.Typer(help="Download official historical public archives.")
 app.add_typer(exchange_info_app, name="exchange-info")
 app.add_typer(universe_app, name="universe")
+app.add_typer(backfill_app, name="backfill")
 console = Console()
 
 
@@ -171,6 +188,133 @@ def universe_build(
         f"Universe {result.version}: {', '.join(result.included_symbols)}\n"
         f"Parquet: {result.parquet_path}\nManifest: {result.manifest_path}"
     )
+
+
+async def _run_kline_backfill(
+    settings: Settings,
+    *,
+    targets: list[ArchiveTarget],
+    job: BackfillJobRecord,
+    max_concurrency: int,
+) -> tuple[list[ArchiveDownloadResult], BackfillJobRecord, Path, Path]:
+    state_store = StateStore(settings.state_db_path)
+    state_store.initialize()
+    state_store.create_backfill_job(job)
+    state_store.transition_backfill_job(job.job_id, BackfillJobStatus.RUNNING)
+    downloader = ArchiveDownloader(
+        base_url=settings.archives.base_url,
+        storage=LocalFilesystemStorage(settings.data_root),
+        state_store=state_store,
+        request_timeout_seconds=settings.archives.request_timeout_seconds,
+        max_concurrency=max_concurrency,
+        max_attempts=settings.archives.max_attempts,
+        retry_base_seconds=settings.archives.retry_base_seconds,
+        max_archive_bytes=settings.archives.max_archive_bytes,
+        max_uncompressed_bytes=settings.archives.max_uncompressed_bytes,
+        chunk_bytes=settings.archives.chunk_bytes,
+    )
+    results = await downloader.download_many(targets, ingestion_run_id=job.job_id)
+    failed = sum(result.outcome is DownloadOutcome.FAILED for result in results)
+    completed = len(results) - failed
+    final_status = BackfillJobStatus.FAILED if failed else BackfillJobStatus.COMPLETED
+    error = f"{failed} archive(s) failed; inspect report" if failed else None
+    state_store.transition_backfill_job(
+        job.job_id,
+        final_status,
+        completed_files=completed,
+        failed_files=failed,
+        last_error=error,
+    )
+    final_job = replace(
+        job,
+        status=final_status,
+        completed_files=completed,
+        failed_files=failed,
+        updated_at_ms=now_ms(),
+        last_error=error,
+    )
+    json_report, markdown_report = write_download_report(
+        results=results, job=final_job, reports_root=settings.reports_root
+    )
+    return results, final_job, json_report, markdown_report
+
+
+@backfill_app.command("klines")
+def backfill_klines(
+    ctx: typer.Context,
+    start: Annotated[str, typer.Option(help="Inclusive UTC start date as YYYY-MM-DD.")],
+    end: Annotated[str, typer.Option(help="Inclusive UTC end date as YYYY-MM-DD.")],
+    symbols: Annotated[
+        str,
+        typer.Option(help="Comma-separated USD-M symbols."),
+    ] = "BTCUSDT,ETHUSDT,SOLUSDT",
+    interval: Annotated[str, typer.Option(help="Kline interval; currently only 1m.")] = "1m",
+    max_concurrency: Annotated[
+        int | None,
+        typer.Option(help="Override bounded download concurrency for this run."),
+    ] = None,
+) -> None:
+    """Download, verify, safely extract, and manifest official daily kline archives."""
+
+    try:
+        settings = _settings(ctx)
+        _configure(settings)
+        parsed_symbols = parse_symbols(symbols)
+        start_date = parse_date(start, option="--start")
+        end_date = parse_date(end, option="--end")
+        targets = build_daily_kline_targets(
+            symbols=parsed_symbols,
+            interval=interval,
+            start=start_date,
+            end=end_date,
+            publication_lag_days=settings.archives.publication_lag_days,
+        )
+        concurrency = (
+            settings.archives.max_concurrency if max_concurrency is None else max_concurrency
+        )
+        if not 1 <= concurrency <= 32:
+            raise typer.BadParameter("max concurrency must be between 1 and 32")
+        job = new_backfill_job(
+            symbols=parsed_symbols,
+            interval=interval,
+            start=start_date,
+            end=end_date,
+            total_files=len(targets),
+        )
+        results, final_job, json_report, markdown_report = asyncio.run(
+            _run_kline_backfill(settings, targets=targets, job=job, max_concurrency=concurrency)
+        )
+    except BinanceAlgoError as exc:
+        _fail(exc)
+
+    table = Table(title=f"kline backfill {final_job.job_id[:8]}")
+    table.add_column("symbol")
+    table.add_column("day")
+    table.add_column("outcome")
+    table.add_column("rows", justify="right")
+    table.add_column("bytes", justify="right")
+    table.add_column("resumed")
+    for result in results:
+        table.add_row(
+            result.target.symbol,
+            result.target.day.isoformat(),
+            result.outcome.value,
+            str(result.row_count or ""),
+            str(result.bytes_downloaded),
+            str(result.resumed).lower(),
+        )
+    console.print(table)
+    console.print(f"Reports: {json_report}\n         {markdown_report}")
+    get_logger(operation="backfill_klines").info(
+        "backfill_complete",
+        job_id=final_job.job_id,
+        status=final_job.status.value,
+        completed_files=final_job.completed_files,
+        failed_files=final_job.failed_files,
+        json_report=str(json_report),
+    )
+    if final_job.status is BackfillJobStatus.FAILED:
+        raise typer.Exit(code=1)
 
 
 if __name__ == "__main__":

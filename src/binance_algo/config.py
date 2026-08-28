@@ -51,9 +51,29 @@ class BinanceConfig(StrictModel):
 class StorageConfig(StrictModel):
     root: Path = Path("var/data")
     state_db: Path = Path("var/state/ingestion.sqlite3")
+    reports_root: Path = Path("var/reports")
     parquet_compression: Literal["zstd", "snappy"] = "zstd"
     micro_batch_max_rows: int = Field(default=25_000, gt=0)
     micro_batch_max_seconds: int = Field(default=30, gt=0)
+
+
+class ArchiveConfig(StrictModel):
+    base_url: str = "https://data.binance.vision/data"
+    request_timeout_seconds: float = Field(default=60.0, gt=0, le=600)
+    max_concurrency: int = Field(default=4, ge=1, le=32)
+    max_attempts: int = Field(default=3, ge=1, le=8)
+    retry_base_seconds: float = Field(default=0.5, ge=0, le=10)
+    publication_lag_days: int = Field(default=1, ge=1, le=7)
+    max_archive_bytes: int = Field(default=100_000_000, gt=0)
+    max_uncompressed_bytes: int = Field(default=500_000_000, gt=0)
+    chunk_bytes: int = Field(default=1_048_576, ge=65_536, le=8_388_608)
+
+    @model_validator(mode="after")
+    def validate_archive_endpoint(self) -> Self:
+        self.base_url = self.base_url.rstrip("/")
+        if not self.base_url.startswith("https://"):
+            raise ValueError("archives.base_url must use HTTPS")
+        return self
 
 
 class UniverseConfig(StrictModel):
@@ -119,6 +139,7 @@ class Settings(StrictModel):
     app: AppConfig
     binance: BinanceConfig
     storage: StorageConfig
+    archives: ArchiveConfig
     universe: UniverseConfig
     streams: StreamsConfig
     safety: SafetyConfig
@@ -137,6 +158,11 @@ class Settings(StrictModel):
     @property
     def state_db_path(self) -> Path:
         path = self.storage.state_db
+        return path if path.is_absolute() else self.project_root / path
+
+    @property
+    def reports_root(self) -> Path:
+        path = self.storage.reports_root
         return path if path.is_absolute() else self.project_root / path
 
 

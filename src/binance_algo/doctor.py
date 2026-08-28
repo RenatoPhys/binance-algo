@@ -9,7 +9,9 @@ from dataclasses import dataclass
 from urllib.parse import urlparse
 
 from binance_algo.clock import ExchangeClock
+from binance_algo.common.errors import StateStoreError
 from binance_algo.config import Settings
+from binance_algo.data.state_store import StateStore
 from binance_algo.exchange.binance_usdm.errors import BinanceRestError
 from binance_algo.exchange.binance_usdm.rest import BinanceUSDMRestClient
 
@@ -55,6 +57,20 @@ async def run_doctor(settings: Settings) -> list[CheckResult]:
     except OSError as exc:
         results.append(CheckResult("storage", False, f"not writable: {exc}"))
 
+    try:
+        state_store = StateStore(settings.state_db_path)
+        state_store.initialize()
+        journal_mode = state_store.journal_mode()
+        results.append(
+            CheckResult(
+                "state_store",
+                journal_mode.lower() == "wal",
+                f"SQLite journal_mode={journal_mode}: {settings.state_db_path}",
+            )
+        )
+    except StateStoreError as exc:
+        results.append(CheckResult("state_store", False, str(exc)))
+
     host = urlparse(settings.binance.rest_base_url).hostname
     if host is None:
         results.append(CheckResult("dns", False, "REST base URL has no hostname"))
@@ -64,6 +80,18 @@ async def run_doctor(settings: Settings) -> list[CheckResult]:
             results.append(CheckResult("dns", True, f"resolved {host}"))
         except OSError as exc:
             results.append(CheckResult("dns", False, f"cannot resolve {host}: {exc}"))
+
+    archive_host = urlparse(settings.archives.base_url).hostname
+    if archive_host is None:
+        results.append(CheckResult("archive_dns", False, "archive base URL has no hostname"))
+    else:
+        try:
+            await asyncio.get_running_loop().getaddrinfo(archive_host, 443)
+            results.append(CheckResult("archive_dns", True, f"resolved {archive_host}"))
+        except OSError as exc:
+            results.append(
+                CheckResult("archive_dns", False, f"cannot resolve {archive_host}: {exc}")
+            )
 
     clock = ExchangeClock()
     try:

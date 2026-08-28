@@ -19,9 +19,21 @@ binance:
 storage:
   root: var/data
   state_db: var/state/ingestion.sqlite3
+  reports_root: var/reports
   parquet_compression: zstd
   micro_batch_max_rows: 25000
   micro_batch_max_seconds: 30
+
+archives:
+  base_url: https://data.binance.vision/data
+  request_timeout_seconds: 60.0
+  max_concurrency: 4
+  max_attempts: 3
+  retry_base_seconds: 0.5
+  publication_lag_days: 1
+  max_archive_bytes: 100000000
+  max_uncompressed_bytes: 500000000
+  chunk_bytes: 1048576
 
 universe:
   seed_symbols:
