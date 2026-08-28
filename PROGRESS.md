@@ -101,9 +101,10 @@ baseline auditável; seu resultado negativo não foi promovido a alpha. A Fase 4
 - testes `network`: não reexecutados neste incremento offline; referência anterior de 2 passed
 - `binance-algo doctor`: todos os checks passaram; SQLite `journal_mode=wal`
 - golden sintético: `tests/golden/research_phase3_synthetic.json`, SHA-256
-  `fd1a5a931de8cc4fac65aa280c0aa64d7a164362745f81493da936fa3b6b4f58`; 3 folds, 72
+  `7cecba1a1323137f7c37f361399d465b37d88151e9a3c9195ef6c2bb9794cd97`; 3 folds, 72
   períodos, retorno `0.022538662281505806`, Sharpe `112.98691088898067`, turnover `7.5` e
-  digest canônico da curva `7e0a80839fb9f8d0b404bfb40fe248d6dd100f85efbf408d501e2b7ff27e80b5`
+  digest canônico portátil da curva
+  `e8df6d5ba839051d69af516ad96a462b386c73b6b6c02f4d49d9f1bea928d0cd`
 - `exchange-info snapshot`: 733 instrumentos persistidos
 - DuckDB: 733 linhas, 733 símbolos distintos, zero filtros tick/step ausentes
 - `universe build`: BTCUSDT, ETHUSDT e SOLUSDT; rerun manteve a versão

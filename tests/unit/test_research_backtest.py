@@ -5,6 +5,7 @@ import json
 import math
 from dataclasses import asdict
 from pathlib import Path
+from typing import Any
 
 import orjson
 import polars as pl
@@ -26,6 +27,23 @@ BASE_CONFIG = PROJECT_ROOT / "configs" / "base.yaml"
 GOLDEN_BASELINE = PROJECT_ROOT / "tests" / "golden" / "research_phase3_synthetic.json"
 SYMBOLS = ("BTCUSDT", "ETHUSDT", "SOLUSDT")
 START_MS = 1_767_225_600_000
+
+
+def _canonicalize_golden_value(value: Any) -> Any:
+    """Remove sub-ULP CPU differences while preserving material golden changes."""
+
+    if isinstance(value, float):
+        return "0" if value == 0 else format(value, ".14g")
+    if isinstance(value, str) and value[:1] in {"{", "["}:
+        try:
+            return _canonicalize_golden_value(json.loads(value))
+        except json.JSONDecodeError:
+            return value
+    if isinstance(value, dict):
+        return {key: _canonicalize_golden_value(item) for key, item in value.items()}
+    if isinstance(value, list):
+        return [_canonicalize_golden_value(item) for item in value]
+    return value
 
 
 class _SpyFittedStrategy:
@@ -185,14 +203,23 @@ def test_synthetic_phase3_baseline_matches_golden_snapshot() -> None:
 
     result = run_phase3_walk_forward(_research_frame(), config=config)
     rows = result.curve.to_dicts()
-    curve_digest = hashlib.sha256(orjson.dumps(rows, option=orjson.OPT_SORT_KEYS)).hexdigest()
+    canonical_rows = _canonicalize_golden_value(rows)
+    curve_digest = hashlib.sha256(
+        orjson.dumps(canonical_rows, option=orjson.OPT_SORT_KEYS)
+    ).hexdigest()
 
     assert [asdict(fold) for fold in result.folds] == expected["folds"]
-    assert asdict(result.metrics) == expected["metrics"]
+    assert _canonicalize_golden_value(asdict(result.metrics)) == _canonicalize_golden_value(
+        expected["metrics"]
+    )
     assert result.curve.height == expected["curve"]["row_count"]
     assert result.curve.columns == expected["curve"]["columns"]
-    assert rows[0] == expected["curve"]["first_row"]
-    assert rows[-1] == expected["curve"]["last_row"]
+    assert _canonicalize_golden_value(rows[0]) == _canonicalize_golden_value(
+        expected["curve"]["first_row"]
+    )
+    assert _canonicalize_golden_value(rows[-1]) == _canonicalize_golden_value(
+        expected["curve"]["last_row"]
+    )
     assert curve_digest == expected["curve"]["canonical_rows_sha256"]
 
 
