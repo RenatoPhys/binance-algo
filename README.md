@@ -154,9 +154,10 @@ chave `symbol + funding_time_ms + rate_type`. O rerun de conteúdo idêntico é 
 `research build` aceita somente klines fechadas, exige grid 1m idêntico entre os três símbolos e
 produz uma linha por símbolo/hora. Features terminam no cutoff; entrada e labels começam no
 próximo open. `research backtest` usa somente splits temporais, fecha cada fold flat e gera os
-estresses descritos em [docs/research_protocol.md](docs/research_protocol.md). O relatório também
-gera `research_phase3_<version>_pnl.svg` com equity gross/net, drawdown, custos acumulados e os
-limites dos folds; o Markdown incorpora a figura automaticamente.
+estresses descritos em [docs/research_protocol.md](docs/research_protocol.md). Passe `--chart`
+para gerar, sob demanda, `research_phase3_<version>_pnl.svg` com equity gross/net, drawdown,
+custos acumulados e os limites dos folds. O padrão não gera figuras, evitando I/O e artefatos
+desnecessários durante sweeps com muitos backtests.
 
 O baseline é um teste end-to-end, não uma recomendação. Na janela validada de 90 dias ele foi
 negativo depois dos custos, e essa evidência foi preservada sem otimização retrospectiva.
