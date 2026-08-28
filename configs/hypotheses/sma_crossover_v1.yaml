@@ -1,0 +1,19 @@
+hypothesis_id: HYP-SMA-CROSS-0001
+title: Short and long simple moving averages may identify relative trend persistence
+mechanism: >-
+  A short simple moving average above a longer simple moving average may identify assets with
+  stronger recent trend persistence relative to the cross-section. The score is reconstructed
+  causally from hourly log returns, while all exposure and risk constraints remain in the
+  portfolio policy.
+expected_direction: long relatively positive fast-minus-slow SMA crossovers and short negative ones
+expected_horizon: 1h
+target_universe: fixed point-in-time Binance USD-M perpetual research universe
+preregistered_success_criteria:
+  purpose: discovery_only
+  cost_stress_multiplier: "1.5"
+  signal_delay_bars: 1
+  promotion_allowed: false
+status: READY
+notes: >-
+  Initial fixed, non-supervised trend specification. Results, including negative results, are
+  exploratory evidence and do not authorize promotion or trading.

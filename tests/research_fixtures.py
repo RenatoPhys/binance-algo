@@ -24,6 +24,7 @@ def research_frame(days: int = 11) -> pl.DataFrame:
                     "execution_time_ms": decision + 1,
                     "label_end_time_ms": decision + 3_600_001,
                     "symbol": symbol,
+                    "log_return_1h": 0.001 * phase + (symbol_index - 1) * 0.0001,
                     "residual_momentum_1h": residual_1h,
                     "residual_momentum_4h": residual_1h * 2 + symbol_index * 0.0001,
                     "residual_momentum_24h": residual_1h * 4 - symbol_index * 0.0001,

@@ -5,6 +5,12 @@ from binance_algo.research.strategies.funding_carry import (
     FundingCarryParameters,
     FundingCarryStrategy,
 )
+from binance_algo.research.strategies.linear_cross_sectional import (
+    LINEAR_CROSS_SECTIONAL_FEATURES,
+    FittedLinearCrossSectionalStrategy,
+    LinearCrossSectionalParameters,
+    LinearCrossSectionalStrategy,
+)
 from binance_algo.research.strategies.registry import build_strategy
 from binance_algo.research.strategies.residual_mean_reversion import (
     ResidualMeanReversionParameters,
@@ -14,15 +20,29 @@ from binance_algo.research.strategies.residual_momentum import (
     ResidualMomentumParameters,
     ResidualMomentumStrategy,
 )
+from binance_algo.research.strategies.sma_crossover import (
+    SMA_CROSSOVER_FEATURES,
+    FittedSmaCrossoverStrategy,
+    SmaCrossoverParameters,
+    SmaCrossoverStrategy,
+)
 
 __all__ = [
+    "LINEAR_CROSS_SECTIONAL_FEATURES",
+    "SMA_CROSSOVER_FEATURES",
+    "FittedLinearCrossSectionalStrategy",
+    "FittedSmaCrossoverStrategy",
     "FittedStrategy",
     "FundingCarryParameters",
     "FundingCarryStrategy",
+    "LinearCrossSectionalParameters",
+    "LinearCrossSectionalStrategy",
     "ResidualMeanReversionParameters",
     "ResidualMeanReversionStrategy",
     "ResidualMomentumParameters",
     "ResidualMomentumStrategy",
+    "SmaCrossoverParameters",
+    "SmaCrossoverStrategy",
     "Strategy",
     "build_strategy",
 ]

@@ -221,6 +221,38 @@ def test_campaign_expansion_is_deterministic_constrained_and_path_independent(
         )
 
 
+def test_campaign_identity_includes_resolved_research_defaults(tmp_path: Path) -> None:
+    _, config, data_root, source, baseline = _plan(tmp_path)
+    changed_fees = config.model_copy(
+        update={
+            "fee_schedule": config.fee_schedule.model_copy(
+                update={"effective_from": config.fee_schedule.effective_from.replace(year=2020)}
+            )
+        }
+    )
+    changed_seed = config.model_copy(update={"random_seed": config.random_seed + 1})
+
+    fee_plan = plan_campaign(
+        source,
+        project_root=PROJECT_ROOT,
+        data_root=data_root,
+        research_config=changed_fees,
+        code_fingerprint=_fingerprint(),
+    )
+    seed_plan = plan_campaign(
+        source,
+        project_root=PROJECT_ROOT,
+        data_root=data_root,
+        research_config=changed_seed,
+        code_fingerprint=_fingerprint(),
+    )
+
+    assert fee_plan.campaign_id != baseline.campaign_id
+    assert seed_plan.campaign_id != baseline.campaign_id
+    assert fee_plan.trials[0].experiment_id != baseline.trials[0].experiment_id
+    assert seed_plan.trials[0].experiment_id != baseline.trials[0].experiment_id
+
+
 def test_discovery_plan_is_summary_only_and_blocks_robustness_and_promotion(
     tmp_path: Path,
 ) -> None:
@@ -511,20 +543,29 @@ def test_partial_campaign_resumes_without_rerunning_successes(
 
 
 @pytest.mark.parametrize(
-    ("campaign_file", "hypothesis_file"),
+    ("campaign_file", "hypothesis_file", "expected_trials"),
     [
-        ("funding_carry_discovery.yaml", "funding_carry_v1.yaml"),
-        ("residual_mean_reversion_discovery.yaml", "residual_mean_reversion_v1.yaml"),
+        ("funding_carry_discovery.yaml", "funding_carry_v1.yaml", 6),
+        ("residual_mean_reversion_discovery.yaml", "residual_mean_reversion_v1.yaml", 6),
+        ("sma_crossover_discovery.yaml", "sma_crossover_v1.yaml", 9),
     ],
 )
 def test_new_strategy_campaign_configs_plan_and_smoke(
     tmp_path: Path,
     campaign_file: str,
     hypothesis_file: str,
+    expected_trials: int,
 ) -> None:
     settings = load_settings(BASE_CONFIG)
     config = settings.research.model_copy(update={"block_bootstrap_samples": 100})
-    case_root = tmp_path / ("fc" if campaign_file.startswith("funding") else "rmr")
+    case_root = (
+        tmp_path
+        / {
+            "funding_carry_discovery.yaml": "fc",
+            "residual_mean_reversion_discovery.yaml": "rmr",
+            "sma_crossover_discovery.yaml": "sma",
+        }[campaign_file]
+    )
     data_root = case_root / "data"
     source = load_campaign_spec(PROJECT_ROOT / "configs" / "experiments" / campaign_file)
     source = source.model_copy(
@@ -540,7 +581,7 @@ def test_new_strategy_campaign_configs_plan_and_smoke(
         research_config=config,
         code_fingerprint=_fingerprint(),
     )
-    assert plan.valid_combinations == 6
+    assert plan.valid_combinations == expected_trials
     assert plan.valid_combinations <= source.campaign.max_trials <= 50
     assert source.campaign.artifact_policy.value == "summary"
     assert source.validation.profile.value == "discovery"

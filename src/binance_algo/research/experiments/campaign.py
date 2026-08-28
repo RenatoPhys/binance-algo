@@ -340,6 +340,34 @@ def plan_campaign(
     label = _label_identity(source.label)
     if dataset_reference.label_id != label.label_id:
         raise ResearchError("campaign label differs from the dataset manifest")
+    if source.execution.grid or source.costs.grid:
+        raise ResearchError("execution and cost grids are not supported in campaign schema v1")
+    if source.execution.name != "bar_next_open":
+        raise ResearchError("only bar_next_open execution is supported")
+    execution_parameters = {"lag_bars": 1, **source.execution.fixed}
+    resolved_cost_parameters = _cost_parameters(source.costs, research_config)
+    validation = source.validation
+    if validation.split_plan != "expanding_walk_forward_v1":
+        raise ResearchError(f"unsupported split plan: {validation.split_plan}")
+    split_parameters = {
+        "train_days": validation.train_days or research_config.walk_forward_train_days,
+        "test_days": validation.test_days or research_config.walk_forward_test_days,
+        "embargo_bars": validation.embargo_bars or research_config.embargo_bars,
+    }
+    validation_parameters: dict[str, Any] = {
+        "profile": validation.profile.value,
+        "stress_cost_multipliers": list(validation.resolved_cost_multipliers()),
+        "stress_signal_delay_bars": list(validation.resolved_signal_delays()),
+    }
+    if validation.profile is ValidationProfile.FULL:
+        validation_parameters.update(
+            {
+                "bootstrap_samples": validation.bootstrap_samples
+                or research_config.block_bootstrap_samples,
+                "bootstrap_block_hours": validation.bootstrap_block_hours
+                or research_config.block_bootstrap_hours,
+            }
+        )
     fingerprint = code_fingerprint or build_code_fingerprint(project_root)
     semantic_payload = {
         "campaign": source.campaign.model_dump(mode="json", exclude={"max_trials"}),
@@ -354,6 +382,13 @@ def plan_campaign(
         "execution": source.execution.model_dump(mode="json"),
         "costs": source.costs.model_dump(mode="json"),
         "validation": source.validation.model_dump(mode="json"),
+        "resolved_experiment_defaults": {
+            "execution_parameters": execution_parameters,
+            "cost_parameters": resolved_cost_parameters,
+            "split_parameters": split_parameters,
+            "validation_parameters": validation_parameters,
+            "random_seed": research_config.random_seed,
+        },
         "ablation": [item.model_dump(mode="json") for item in source.ablation],
         "code_fingerprint": fingerprint.model_dump(mode="json"),
     }
@@ -382,28 +417,6 @@ def plan_campaign(
         raise ResearchError(
             f"campaign expands to {len(valid)} valid trials, above max_trials="
             f"{source.campaign.max_trials}; pass --allow-large-campaign to continue"
-        )
-    if source.execution.grid or source.costs.grid:
-        raise ResearchError("execution and cost grids are not supported in campaign schema v1")
-    if source.execution.name != "bar_next_open":
-        raise ResearchError("only bar_next_open execution is supported")
-    execution_parameters = {"lag_bars": 1, **source.execution.fixed}
-    validation = source.validation
-    if validation.split_plan != "expanding_walk_forward_v1":
-        raise ResearchError(f"unsupported split plan: {validation.split_plan}")
-    validation_parameters: dict[str, Any] = {
-        "profile": validation.profile.value,
-        "stress_cost_multipliers": list(validation.resolved_cost_multipliers()),
-        "stress_signal_delay_bars": list(validation.resolved_signal_delays()),
-    }
-    if validation.profile is ValidationProfile.FULL:
-        validation_parameters.update(
-            {
-                "bootstrap_samples": validation.bootstrap_samples
-                or research_config.block_bootstrap_samples,
-                "bootstrap_block_hours": validation.bootstrap_block_hours
-                or research_config.block_bootstrap_hours,
-            }
         )
     trials = []
     for ordinal, (strategy_parameters, portfolio_parameters) in enumerate(valid):
@@ -434,16 +447,12 @@ def plan_campaign(
             cost_model=ParameterizedComponent(
                 component_id=source.costs.name,
                 version=source.costs.version,
-                parameters=_cost_parameters(source.costs, research_config),
+                parameters=resolved_cost_parameters,
             ),
             split_plan=ParameterizedComponent(
                 component_id="expanding_walk_forward",
                 version="1",
-                parameters={
-                    "train_days": validation.train_days or research_config.walk_forward_train_days,
-                    "test_days": validation.test_days or research_config.walk_forward_test_days,
-                    "embargo_bars": validation.embargo_bars or research_config.embargo_bars,
-                },
+                parameters=split_parameters,
             ),
             validation_plan=ParameterizedComponent(
                 component_id="phase3_validation",

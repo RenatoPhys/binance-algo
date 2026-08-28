@@ -1,0 +1,22 @@
+hypothesis_id: HYP-SLOW-SMA-TREND-0001
+title: Multi-day cross-sectional SMA trend may survive explicit costs
+mechanism: >-
+  Cross-sectional trend measured over multi-day moving-average windows should change rankings less
+  often than intraday crossovers. Daily buffered rebalancing may retain persistent relative trend
+  while materially reducing fees, spread and slippage.
+expected_direction: long the strongest multi-day crossover and short the weakest
+expected_horizon: 24h holding interval with hourly mark-to-market
+target_universe: fixed point-in-time BTCUSDT, ETHUSDT and SOLUSDT research universe
+preregistered_success_criteria:
+  development_end: "2024-08-27"
+  development_net_total_return_min: "0.0"
+  development_net_sharpe_min: "0.5"
+  development_cost_1_5x_total_return_min: "0.0"
+  final_oos_days: 728
+  final_net_total_return_min: "0.0"
+  final_cost_1_5x_total_return_min: "0.0"
+  promotion_allowed: false
+status: READY
+notes: >-
+  The development grid varies only three fast and three slow multi-day windows under a fixed daily
+  buffered portfolio. A final candidate must be frozen before evaluation on the two-year OOS.

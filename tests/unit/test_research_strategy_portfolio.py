@@ -2,15 +2,20 @@ from __future__ import annotations
 
 import math
 
+import numpy as np
 import polars as pl
 import pytest
 
 from binance_algo.common.errors import ResearchError
 from binance_algo.research.contracts import FoldContext, TrainingDataset, select_feature_view
+from binance_algo.research.panel import PanelData
 from binance_algo.research.portfolio.neutral_long_short import (
+    BufferedNeutralLongShortParameters,
+    BufferedNeutralLongShortPolicy,
     NeutralLongShortParameters,
     NeutralLongShortPolicy,
 )
+from binance_algo.research.portfolio.registry import build_portfolio_policy
 from binance_algo.research.strategies.funding_carry import FUNDING_CARRY_FEATURES
 from binance_algo.research.strategies.registry import build_strategy
 from binance_algo.research.strategies.residual_mean_reversion import (
@@ -210,6 +215,95 @@ def test_residual_mean_reversion_factory_is_strict_fixed_and_directional() -> No
         )
 
 
+def test_sma_crossover_factory_is_causal_fixed_and_directional() -> None:
+    hour_ms = 3_600_000
+    start_ms = 1_700_000_000_000
+    periods = 80
+    symbols = ("BTCUSDT", "ETHUSDT", "SOLUSDT")
+    times = start_ms + np.arange(periods, dtype=np.int64) * hour_ms
+    times[60:] += hour_ms
+    hourly_returns = np.tile(np.asarray([0.005, 0.0, -0.005]), (periods, 1))
+    frame = pl.DataFrame(
+        {
+            "decision_time_ms": np.repeat(times, len(symbols)),
+            "symbol": np.tile(np.asarray(symbols), periods),
+            "log_return_1h": hourly_returns.reshape(-1),
+        }
+    )
+    panel = PanelData.from_frame(frame, feature_columns=("log_return_1h",))
+    context = FoldContext(
+        fold=1,
+        train_start_ms=int(times[0]),
+        train_end_ms=int(times[47]),
+        test_start_ms=int(times[72]),
+        test_end_ms=int(times[-1]),
+        embargo_bars=1,
+        random_seed=42,
+    )
+    strategy = build_strategy(
+        "sma_crossover",
+        "v1",
+        {"fast_window_hours": 4, "slow_window_hours": 24},
+    )
+    fitted = strategy.fit_panel(panel, target=None, context=context)
+    scores = fitted.score_panel(panel, context=context).frame
+    first = scores.filter(pl.col("decision_time_ms") == int(times[72])).sort("symbol")
+
+    assert strategy.required_features() == ("log_return_1h",)
+    assert strategy.target_column() is None
+    assert first.filter(pl.col("symbol") == "BTCUSDT")["score"].item() > 0
+    assert first.filter(pl.col("symbol") == "SOLUSDT")["score"].item() < 0
+    strength_strategy = build_strategy(
+        "sma_trend_strength",
+        "v1",
+        {"fast_window_hours": 4, "slow_window_hours": 24},
+    )
+    strength_scores = (
+        strength_strategy.fit_panel(panel, target=None, context=context)
+        .score_panel(panel, context=context)
+        .frame
+    )
+    first_strength = strength_scores.filter(pl.col("decision_time_ms") == int(times[72])).sort(
+        "symbol"
+    )
+    assert first_strength.filter(pl.col("symbol") == "BTCUSDT")["score"].item() > 0
+    assert first_strength.filter(pl.col("symbol") == "SOLUSDT")["score"].item() < 0
+    assert float(first_strength["score"].std()) < 1
+
+    regime = np.repeat(np.linspace(0.1, 0.8, periods), len(symbols))
+    filtered_frame = frame.with_columns(pl.Series("market_volatility_regime", regime))
+    filtered_panel = PanelData.from_frame(
+        filtered_frame,
+        feature_columns=("log_return_1h", "market_volatility_regime"),
+    )
+    filtered_strategy = build_strategy(
+        "volatility_filtered_sma",
+        "v1",
+        {
+            "fast_window_hours": 4,
+            "slow_window_hours": 24,
+            "maximum_volatility_quantile": 0.5,
+        },
+    )
+    filtered = filtered_strategy.fit_panel(filtered_panel, target=None, context=context)
+    filtered_scores = filtered.score_panel(filtered_panel, context=context).frame
+    last = filtered_scores.filter(pl.col("decision_time_ms") == int(times[-1]))
+    assert last["score"].to_list() == [0.0, 0.0, 0.0]
+    assert filtered.volatility_threshold < 0.8
+    with pytest.raises(ResearchError, match="shorter than"):
+        build_strategy(
+            "sma_crossover",
+            "1",
+            {"fast_window_hours": 24, "slow_window_hours": 12},
+        )
+    with pytest.raises(ResearchError, match="extra_forbidden"):
+        build_strategy(
+            "sma_crossover",
+            "1",
+            {"fast_window_hours": 4, "slow_window_hours": 24, "centered": True},
+        )
+
+
 def test_non_trainable_strategy_rejects_target_and_test_rows_during_fit() -> None:
     strategy = _strategy()
     train = _feature_frame(1_500)
@@ -264,6 +358,61 @@ def test_neutral_long_short_fails_on_degenerate_scores_or_misaligned_state() -> 
         _policy().target_weights(degenerate, market_state, context=_context())
     with pytest.raises(ResearchError, match="keys must align exactly"):
         _policy().target_weights(scores, market_state.head(5), context=_context())
+
+
+def test_buffered_neutral_long_short_holds_weights_between_rebalances() -> None:
+    scores, market_state = _portfolio_inputs()
+    policy = BufferedNeutralLongShortPolicy(
+        BufferedNeutralLongShortParameters(
+            no_trade_score_band=0.0,
+            rebalance_interval_hours=2,
+            gross_exposure=0.5,
+            annual_volatility_target=0.15,
+            max_symbol_weight=0.25,
+        )
+    )
+
+    targets = policy.target_weights(scores, market_state, context=_context())
+    first = targets.filter(pl.col("decision_time_ms") == 3_000).sort("symbol")
+    second = targets.filter(pl.col("decision_time_ms") == 4_000).sort("symbol")
+
+    assert first["target_weight"].to_list() == second["target_weight"].to_list()
+    assert first.filter(pl.col("symbol") == "BTCUSDT")["target_weight"].item() > 0
+
+    gated = BufferedNeutralLongShortPolicy(
+        BufferedNeutralLongShortParameters(
+            no_trade_score_band=0.0,
+            rebalance_interval_hours=2,
+            gross_exposure=0.5,
+            annual_volatility_target=0.15,
+            max_symbol_weight=0.25,
+            minimum_score_spread=5.0,
+        )
+    ).target_weights(scores, market_state, context=_context())
+    assert gated["target_weight"].to_list() == [0.0] * 6
+
+
+def test_buffered_neutral_long_short_factory_is_strict() -> None:
+    parameters = {
+        "no_trade_score_band": 0.5,
+        "rebalance_interval_hours": 12,
+        "gross_exposure": 0.5,
+        "annual_volatility_target": 0.15,
+        "max_symbol_weight": 0.25,
+        "minimum_score_spread": 0.05,
+    }
+
+    policy = build_portfolio_policy("buffered_neutral_long_short", "v1", parameters)
+
+    assert policy.policy_id == "buffered_neutral_long_short"
+    assert policy.parameters.rebalance_interval_hours == 12
+    assert policy.parameters.minimum_score_spread == 0.05
+    with pytest.raises(ResearchError, match="extra_forbidden"):
+        build_portfolio_policy(
+            "buffered_neutral_long_short",
+            "1",
+            {**parameters, "future_leak": True},
+        )
 
 
 @pytest.mark.parametrize(

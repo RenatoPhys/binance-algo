@@ -1,0 +1,64 @@
+campaign:
+  name: sma_crossover_v1_oos_2y_discovery
+  description: >-
+    Two-year out-of-sample discovery grid for causal hourly simple-moving-average crossovers.
+    The first 1,435 days form the initial expanding training window; only the final 728 complete
+    days are reported OOS. Sparse feature-calendar gaps keep the last fully observed SMA signal
+    until both windows are complete again. This preserves exploratory evidence only.
+  hypothesis_id: HYP-SMA-CROSS-0001
+  artifact_policy: summary
+  max_trials: 9
+
+dataset:
+  manifest: latest
+
+feature_set:
+  name: phase3_baseline_features
+  version: "1"
+
+label:
+  name: gross_forward_return_1h
+  version: "1"
+  horizon_minutes: 60
+
+strategy:
+  name: sma_crossover
+  version: "1"
+  fixed: {}
+  grid:
+    fast_window_hours: [4, 8, 12]
+    slow_window_hours: [24, 48, 72]
+
+portfolio:
+  name: neutral_long_short
+  version: "1"
+  fixed:
+    no_trade_score_band: 0.10
+    gross_exposure: 0.50
+    annual_volatility_target: 0.15
+    max_symbol_weight: 0.25
+
+execution:
+  name: bar_next_open
+  version: "1"
+  fixed: {}
+
+costs:
+  name: configured_taker
+  version: "1"
+  fixed:
+    cost_multiplier: 1.0
+
+validation:
+  profile: discovery
+  split_plan: expanding_walk_forward_v1
+  train_days: 1435
+  test_days: 14
+  embargo_bars: 1
+  stress_cost_multipliers: [1.5]
+  stress_signal_delay_bars: [1]
+
+runner:
+  max_workers: 4
+  fail_fast: false
+  resume: true

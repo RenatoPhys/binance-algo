@@ -1,0 +1,12 @@
+app:
+  environment: research
+
+research:
+  fee_schedule:
+    effective_from: 2020-09-15
+    source: constant_backtest_assumption_not_historical_account_tier
+
+safety:
+  live_trading: false
+  allow_order_submission: false
+  max_order_notional_usdt: 0

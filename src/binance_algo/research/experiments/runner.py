@@ -20,8 +20,8 @@ from binance_algo.common.errors import ResearchError
 from binance_algo.config import FeeScheduleConfig, ResearchConfig
 from binance_algo.data.storage import LocalFilesystemStorage
 from binance_algo.research.backtest import (
-    ACCOUNTING_METADATA_FIELDS,
     ACCOUNTING_OUTCOME_FIELDS,
+    accounting_metadata_columns,
     run_research_validation,
 )
 from binance_algo.research.contracts import ValidationProfile
@@ -375,15 +375,16 @@ class ExperimentRunner:
                 spec.portfolio_policy.version,
                 spec.portfolio_parameters,
             )
+            feature_columns = tuple(
+                dict.fromkeys(
+                    (*strategy.required_features(), *portfolio_policy.required_features())
+                )
+            )
             loaded_dataset = WORKER_DATASET_CACHE.load(
                 dataset_path,
-                feature_columns=tuple(
-                    dict.fromkeys(
-                        (*strategy.required_features(), *portfolio_policy.required_features())
-                    )
-                ),
+                feature_columns=feature_columns,
                 outcome_columns=ACCOUNTING_OUTCOME_FIELDS,
-                metadata_columns=ACCOUNTING_METADATA_FIELDS,
+                metadata_columns=accounting_metadata_columns(feature_columns),
             )
             config, validation_parameters = _execution_config(spec, self.research_config)
             if (

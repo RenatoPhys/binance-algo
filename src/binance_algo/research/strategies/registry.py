@@ -13,6 +13,10 @@ from binance_algo.research.strategies.funding_carry import (
     FundingCarryParameters,
     FundingCarryStrategy,
 )
+from binance_algo.research.strategies.linear_cross_sectional import (
+    LinearCrossSectionalParameters,
+    LinearCrossSectionalStrategy,
+)
 from binance_algo.research.strategies.residual_mean_reversion import (
     ResidualMeanReversionParameters,
     ResidualMeanReversionStrategy,
@@ -20,6 +24,15 @@ from binance_algo.research.strategies.residual_mean_reversion import (
 from binance_algo.research.strategies.residual_momentum import (
     ResidualMomentumParameters,
     ResidualMomentumStrategy,
+)
+from binance_algo.research.strategies.sma_crossover import (
+    SmaCrossoverParameters,
+    SmaCrossoverStrategy,
+)
+from binance_algo.research.strategies.sma_trend_strength import SmaTrendStrengthStrategy
+from binance_algo.research.strategies.volatility_filtered_sma import (
+    VolatilityFilteredSmaParameters,
+    VolatilityFilteredSmaStrategy,
 )
 
 
@@ -39,12 +52,29 @@ class FundingCarrySpec(BaseModel):
     momentum_confirmation_weight: float = Field(ge=0, le=5)
 
 
+class LinearCrossSectionalSpec(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    ridge_alpha: float = Field(ge=1e-6, le=100)
+
+
 class ResidualMeanReversionSpec(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     momentum_weight_1h: float = Field(ge=0, le=1)
     momentum_weight_4h: float = Field(ge=0, le=1)
     volatility_adjustment: float = Field(ge=0, le=2)
+
+
+class SmaCrossoverSpec(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    fast_window_hours: int = Field(ge=2, le=72)
+    slow_window_hours: int = Field(ge=4, le=720)
+
+
+class VolatilityFilteredSmaSpec(SmaCrossoverSpec):
+    maximum_volatility_quantile: float = Field(ge=0.25, le=0.90)
 
 
 StrategyFactory = Callable[[Mapping[str, Any]], Strategy]
@@ -68,6 +98,18 @@ def build_funding_carry(parameters: Mapping[str, Any]) -> FundingCarryStrategy:
         raise ResearchError(f"invalid funding_carry parameters: {exc}") from exc
 
 
+def build_linear_cross_sectional(
+    parameters: Mapping[str, Any],
+) -> LinearCrossSectionalStrategy:
+    try:
+        parsed = LinearCrossSectionalSpec.model_validate(dict(parameters))
+        return LinearCrossSectionalStrategy(
+            parameters=LinearCrossSectionalParameters(**parsed.model_dump())
+        )
+    except (TypeError, ValueError, ResearchError) as exc:
+        raise ResearchError(f"invalid linear_cross_sectional parameters: {exc}") from exc
+
+
 def build_residual_mean_reversion(
     parameters: Mapping[str, Any],
 ) -> ResidualMeanReversionStrategy:
@@ -80,13 +122,47 @@ def build_residual_mean_reversion(
         raise ResearchError(f"invalid residual_mean_reversion parameters: {exc}") from exc
 
 
+def build_sma_crossover(parameters: Mapping[str, Any]) -> SmaCrossoverStrategy:
+    try:
+        parsed = SmaCrossoverSpec.model_validate(dict(parameters))
+        return SmaCrossoverStrategy(parameters=SmaCrossoverParameters(**parsed.model_dump()))
+    except (TypeError, ValueError, ResearchError) as exc:
+        raise ResearchError(f"invalid sma_crossover parameters: {exc}") from exc
+
+
+def build_sma_trend_strength(parameters: Mapping[str, Any]) -> SmaTrendStrengthStrategy:
+    try:
+        parsed = SmaCrossoverSpec.model_validate(dict(parameters))
+        return SmaTrendStrengthStrategy(parameters=SmaCrossoverParameters(**parsed.model_dump()))
+    except (TypeError, ValueError, ResearchError) as exc:
+        raise ResearchError(f"invalid sma_trend_strength parameters: {exc}") from exc
+
+
+def build_volatility_filtered_sma(parameters: Mapping[str, Any]) -> VolatilityFilteredSmaStrategy:
+    try:
+        parsed = VolatilityFilteredSmaSpec.model_validate(dict(parameters))
+        return VolatilityFilteredSmaStrategy(
+            parameters=VolatilityFilteredSmaParameters(**parsed.model_dump())
+        )
+    except (TypeError, ValueError, ResearchError) as exc:
+        raise ResearchError(f"invalid volatility_filtered_sma parameters: {exc}") from exc
+
+
 STRATEGY_FACTORIES: dict[tuple[str, str], StrategyFactory] = {
     ("funding_carry", "1"): build_funding_carry,
     ("funding_carry", "v1"): build_funding_carry,
+    ("linear_cross_sectional", "1"): build_linear_cross_sectional,
+    ("linear_cross_sectional", "v1"): build_linear_cross_sectional,
     ("residual_momentum", "1"): build_residual_momentum,
     ("residual_momentum", "v1"): build_residual_momentum,
     ("residual_mean_reversion", "1"): build_residual_mean_reversion,
     ("residual_mean_reversion", "v1"): build_residual_mean_reversion,
+    ("sma_crossover", "1"): build_sma_crossover,
+    ("sma_crossover", "v1"): build_sma_crossover,
+    ("sma_trend_strength", "1"): build_sma_trend_strength,
+    ("sma_trend_strength", "v1"): build_sma_trend_strength,
+    ("volatility_filtered_sma", "1"): build_volatility_filtered_sma,
+    ("volatility_filtered_sma", "v1"): build_volatility_filtered_sma,
 }
 
 
@@ -105,11 +181,18 @@ def build_strategy(
 __all__ = [
     "STRATEGY_FACTORIES",
     "FundingCarrySpec",
+    "LinearCrossSectionalSpec",
     "ResidualMeanReversionSpec",
     "ResidualMomentumSpec",
+    "SmaCrossoverSpec",
     "StrategyFactory",
+    "VolatilityFilteredSmaSpec",
     "build_funding_carry",
+    "build_linear_cross_sectional",
     "build_residual_mean_reversion",
     "build_residual_momentum",
+    "build_sma_crossover",
+    "build_sma_trend_strength",
     "build_strategy",
+    "build_volatility_filtered_sma",
 ]

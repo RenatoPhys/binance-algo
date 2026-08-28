@@ -10,6 +10,8 @@ from pydantic import BaseModel, ConfigDict, Field
 from binance_algo.common.errors import ResearchError
 from binance_algo.research.portfolio.base import PortfolioPolicy
 from binance_algo.research.portfolio.neutral_long_short import (
+    BufferedNeutralLongShortParameters,
+    BufferedNeutralLongShortPolicy,
     NeutralLongShortParameters,
     NeutralLongShortPolicy,
 )
@@ -24,6 +26,11 @@ class NeutralLongShortSpec(BaseModel):
     max_symbol_weight: float = Field(gt=0, le=1)
 
 
+class BufferedNeutralLongShortSpec(NeutralLongShortSpec):
+    rebalance_interval_hours: int = Field(ge=1, le=24 * 30)
+    minimum_score_spread: float = Field(default=0.0, ge=0)
+
+
 PortfolioPolicyFactory = Callable[[Mapping[str, Any]], PortfolioPolicy]
 
 
@@ -35,7 +42,21 @@ def build_neutral_long_short(parameters: Mapping[str, Any]) -> NeutralLongShortP
         raise ResearchError(f"invalid neutral_long_short parameters: {exc}") from exc
 
 
+def build_buffered_neutral_long_short(
+    parameters: Mapping[str, Any],
+) -> BufferedNeutralLongShortPolicy:
+    try:
+        parsed = BufferedNeutralLongShortSpec.model_validate(dict(parameters))
+        return BufferedNeutralLongShortPolicy(
+            parameters=BufferedNeutralLongShortParameters(**parsed.model_dump())
+        )
+    except (TypeError, ValueError, ResearchError) as exc:
+        raise ResearchError(f"invalid buffered_neutral_long_short parameters: {exc}") from exc
+
+
 PORTFOLIO_POLICY_FACTORIES: dict[tuple[str, str], PortfolioPolicyFactory] = {
+    ("buffered_neutral_long_short", "1"): build_buffered_neutral_long_short,
+    ("buffered_neutral_long_short", "v1"): build_buffered_neutral_long_short,
     ("neutral_long_short", "1"): build_neutral_long_short,
     ("neutral_long_short", "v1"): build_neutral_long_short,
 }
@@ -55,8 +76,10 @@ def build_portfolio_policy(
 
 __all__ = [
     "PORTFOLIO_POLICY_FACTORIES",
+    "BufferedNeutralLongShortSpec",
     "NeutralLongShortSpec",
     "PortfolioPolicyFactory",
+    "build_buffered_neutral_long_short",
     "build_neutral_long_short",
     "build_portfolio_policy",
 ]

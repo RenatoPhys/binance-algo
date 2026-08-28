@@ -1,0 +1,28 @@
+hypothesis_id: HYP-VOL-FILTERED-SMA-0001
+title: Slow relative trend may be concentrated outside high-volatility regimes
+mechanism: >-
+  Development evidence for the 12-hour versus 168-hour SMA showed positive returns in low and
+  middle market-volatility regimes and losses in the high regime. A threshold fitted solely from
+  each fold's training-feature distribution may exclude unstable high-volatility observations
+  without using labels or future regime quantiles.
+expected_direction: long the strongest slow SMA trend and short the weakest below the fitted volatility threshold
+expected_horizon: 24h holding interval with hourly mark-to-market
+target_universe: fixed point-in-time BTCUSDT, ETHUSDT and SOLUSDT research universe
+preregistered_success_criteria:
+  development_end: "2024-08-27"
+  development_net_total_return_min: "0.0"
+  development_net_sharpe_min: "0.5"
+  development_cost_1_5x_total_return_min: "0.0"
+  development_signal_delay_total_return_min: "0.0"
+  development_profitable_fold_fraction_min: "0.55"
+  final_oos_days: 728
+  final_net_total_return_min: "0.0"
+  final_net_sharpe_min: "0.5"
+  final_cost_1_5x_total_return_min: "0.0"
+  final_signal_delay_total_return_min: "0.0"
+  promotion_allowed: false
+status: READY
+notes: >-
+  The volatility threshold is recomputed from each expanding training window. The development grid
+  contains only median, two-thirds and upper-quartile feature thresholds. At most one candidate may
+  be frozen for final two-year OOS confirmation.
