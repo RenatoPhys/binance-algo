@@ -21,6 +21,10 @@ from binance_algo.research.strategies.residual_momentum import (
     ResidualMomentumParameters,
     ResidualMomentumStrategy,
 )
+from binance_algo.research.strategies.sma_crossover import (
+    SmaCrossoverParameters,
+    SmaCrossoverStrategy,
+)
 
 
 class ResidualMomentumSpec(BaseModel):
@@ -45,6 +49,13 @@ class ResidualMeanReversionSpec(BaseModel):
     momentum_weight_1h: float = Field(ge=0, le=1)
     momentum_weight_4h: float = Field(ge=0, le=1)
     volatility_adjustment: float = Field(ge=0, le=2)
+
+
+class SmaCrossoverSpec(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    fast_window_hours: int = Field(ge=2, le=72)
+    slow_window_hours: int = Field(ge=4, le=720)
 
 
 StrategyFactory = Callable[[Mapping[str, Any]], Strategy]
@@ -80,6 +91,14 @@ def build_residual_mean_reversion(
         raise ResearchError(f"invalid residual_mean_reversion parameters: {exc}") from exc
 
 
+def build_sma_crossover(parameters: Mapping[str, Any]) -> SmaCrossoverStrategy:
+    try:
+        parsed = SmaCrossoverSpec.model_validate(dict(parameters))
+        return SmaCrossoverStrategy(parameters=SmaCrossoverParameters(**parsed.model_dump()))
+    except (TypeError, ValueError, ResearchError) as exc:
+        raise ResearchError(f"invalid sma_crossover parameters: {exc}") from exc
+
+
 STRATEGY_FACTORIES: dict[tuple[str, str], StrategyFactory] = {
     ("funding_carry", "1"): build_funding_carry,
     ("funding_carry", "v1"): build_funding_carry,
@@ -87,6 +106,8 @@ STRATEGY_FACTORIES: dict[tuple[str, str], StrategyFactory] = {
     ("residual_momentum", "v1"): build_residual_momentum,
     ("residual_mean_reversion", "1"): build_residual_mean_reversion,
     ("residual_mean_reversion", "v1"): build_residual_mean_reversion,
+    ("sma_crossover", "1"): build_sma_crossover,
+    ("sma_crossover", "v1"): build_sma_crossover,
 }
 
 
@@ -107,9 +128,11 @@ __all__ = [
     "FundingCarrySpec",
     "ResidualMeanReversionSpec",
     "ResidualMomentumSpec",
+    "SmaCrossoverSpec",
     "StrategyFactory",
     "build_funding_carry",
     "build_residual_mean_reversion",
     "build_residual_momentum",
+    "build_sma_crossover",
     "build_strategy",
 ]

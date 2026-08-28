@@ -2,11 +2,13 @@ from __future__ import annotations
 
 import math
 
+import numpy as np
 import polars as pl
 import pytest
 
 from binance_algo.common.errors import ResearchError
 from binance_algo.research.contracts import FoldContext, TrainingDataset, select_feature_view
+from binance_algo.research.panel import PanelData
 from binance_algo.research.portfolio.neutral_long_short import (
     NeutralLongShortParameters,
     NeutralLongShortPolicy,
@@ -207,6 +209,57 @@ def test_residual_mean_reversion_factory_is_strict_fixed_and_directional() -> No
                 "momentum_weight_4h": 0.3,
                 "volatility_adjustment": 0.0,
             },
+        )
+
+
+def test_sma_crossover_factory_is_causal_fixed_and_directional() -> None:
+    hour_ms = 3_600_000
+    start_ms = 1_700_000_000_000
+    periods = 80
+    symbols = ("BTCUSDT", "ETHUSDT", "SOLUSDT")
+    times = start_ms + np.arange(periods, dtype=np.int64) * hour_ms
+    hourly_returns = np.tile(np.asarray([0.005, 0.0, -0.005]), (periods, 1))
+    frame = pl.DataFrame(
+        {
+            "decision_time_ms": np.repeat(times, len(symbols)),
+            "symbol": np.tile(np.asarray(symbols), periods),
+            "log_return_1h": hourly_returns.reshape(-1),
+        }
+    )
+    panel = PanelData.from_frame(frame, feature_columns=("log_return_1h",))
+    context = FoldContext(
+        fold=1,
+        train_start_ms=int(times[0]),
+        train_end_ms=int(times[47]),
+        test_start_ms=int(times[72]),
+        test_end_ms=int(times[-1]),
+        embargo_bars=1,
+        random_seed=42,
+    )
+    strategy = build_strategy(
+        "sma_crossover",
+        "v1",
+        {"fast_window_hours": 4, "slow_window_hours": 24},
+    )
+    fitted = strategy.fit_panel(panel, target=None, context=context)
+    scores = fitted.score_panel(panel, context=context).frame
+    first = scores.filter(pl.col("decision_time_ms") == int(times[72])).sort("symbol")
+
+    assert strategy.required_features() == ("log_return_1h",)
+    assert strategy.target_column() is None
+    assert first.filter(pl.col("symbol") == "BTCUSDT")["score"].item() > 0
+    assert first.filter(pl.col("symbol") == "SOLUSDT")["score"].item() < 0
+    with pytest.raises(ResearchError, match="shorter than"):
+        build_strategy(
+            "sma_crossover",
+            "1",
+            {"fast_window_hours": 24, "slow_window_hours": 12},
+        )
+    with pytest.raises(ResearchError, match="extra_forbidden"):
+        build_strategy(
+            "sma_crossover",
+            "1",
+            {"fast_window_hours": 4, "slow_window_hours": 24, "centered": True},
         )
 
 

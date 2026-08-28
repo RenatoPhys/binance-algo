@@ -14,8 +14,16 @@ from binance_algo.research.strategies.residual_momentum import (
     ResidualMomentumParameters,
     ResidualMomentumStrategy,
 )
+from binance_algo.research.strategies.sma_crossover import (
+    SMA_CROSSOVER_FEATURES,
+    FittedSmaCrossoverStrategy,
+    SmaCrossoverParameters,
+    SmaCrossoverStrategy,
+)
 
 __all__ = [
+    "SMA_CROSSOVER_FEATURES",
+    "FittedSmaCrossoverStrategy",
     "FittedStrategy",
     "FundingCarryParameters",
     "FundingCarryStrategy",
@@ -23,6 +31,8 @@ __all__ = [
     "ResidualMeanReversionStrategy",
     "ResidualMomentumParameters",
     "ResidualMomentumStrategy",
+    "SmaCrossoverParameters",
+    "SmaCrossoverStrategy",
     "Strategy",
     "build_strategy",
 ]
