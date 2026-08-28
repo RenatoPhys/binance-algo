@@ -1,6 +1,11 @@
 """Typed strategy contracts and implementations for offline research."""
 
 from binance_algo.research.strategies.base import FittedStrategy, Strategy
+from binance_algo.research.strategies.carry_relative_strength import (
+    CARRY_RELATIVE_STRENGTH_FEATURES,
+    CarryRelativeStrengthParameters,
+    CarryRelativeStrengthStrategy,
+)
 from binance_algo.research.strategies.donchian_breakout import (
     DONCHIAN_BREAKOUT_FEATURES,
     DonchianBreakoutParameters,
@@ -38,10 +43,13 @@ from binance_algo.research.strategies.sma_crossover import (
 )
 
 __all__ = [
+    "CARRY_RELATIVE_STRENGTH_FEATURES",
     "DONCHIAN_BREAKOUT_FEATURES",
     "LINEAR_CROSS_SECTIONAL_FEATURES",
     "RELATIVE_STRENGTH_FEATURES",
     "SMA_CROSSOVER_FEATURES",
+    "CarryRelativeStrengthParameters",
+    "CarryRelativeStrengthStrategy",
     "DonchianBreakoutParameters",
     "DonchianBreakoutStrategy",
     "FittedLinearCrossSectionalStrategy",

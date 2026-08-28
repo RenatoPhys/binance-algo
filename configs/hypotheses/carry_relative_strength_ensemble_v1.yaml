@@ -1,0 +1,26 @@
+hypothesis_id: HYP-CARRY-RELATIVE-ENSEMBLE-0001
+title: A fixed carry and relative-strength sleeve mix may improve portfolio efficiency
+mechanism: >-
+  Funding carry and seven-day cross-sectional relative strength were profitable after stressed
+  costs in separate preregistered development screens and had near-zero hourly correlation. A
+  convex 70/30 combination of their independently constructed neutral target weights should retain
+  carry's edge while reducing drawdown through relative leadership diversification.
+expected_direction: 70 percent funding carry targets and 30 percent relative-strength targets
+expected_horizon: 48-hour buffered sleeve updates with hourly mark-to-market
+target_universe: fixed point-in-time BTCUSDT, ETHUSDT and SOLUSDT research universe
+preregistered_success_criteria:
+  development_end: "2024-08-27"
+  development_net_total_return_min: "0.0"
+  development_net_sharpe_min: "0.85"
+  development_cost_1_5x_total_return_min: "0.0"
+  development_signal_delay_total_return_min: "0.0"
+  final_oos_days: 728
+  final_net_total_return_min: "0.0"
+  final_net_sharpe_min: "0.5"
+  final_cost_1_5x_total_return_min: "0.0"
+  promotion_allowed: false
+status: READY
+notes: >-
+  The component specifications, 70/30 capital weights, 48-hour rebalance and risk constraints are
+  frozen from the two prior development screens. This campaign contains one trial and permits at
+  most one final OOS confirmation.

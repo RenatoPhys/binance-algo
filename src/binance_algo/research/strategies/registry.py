@@ -9,6 +9,10 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from binance_algo.common.errors import ResearchError
 from binance_algo.research.strategies.base import Strategy
+from binance_algo.research.strategies.carry_relative_strength import (
+    CarryRelativeStrengthParameters,
+    CarryRelativeStrengthStrategy,
+)
 from binance_algo.research.strategies.donchian_breakout import (
     DonchianBreakoutParameters,
     DonchianBreakoutStrategy,
@@ -65,6 +69,10 @@ class FundingCarrySpec(BaseModel):
     funding_rate_weight: float = Field(ge=0, le=5)
     funding_change_weight: float = Field(ge=0, le=5)
     momentum_confirmation_weight: float = Field(ge=0, le=5)
+
+
+class CarryRelativeStrengthSpec(FundingCarrySpec):
+    relative_strength_lookback_hours: int = Field(ge=24, le=24 * 90)
 
 
 class LinearCrossSectionalSpec(BaseModel):
@@ -129,6 +137,18 @@ def build_funding_carry(parameters: Mapping[str, Any]) -> FundingCarryStrategy:
         raise ResearchError(f"invalid funding_carry parameters: {exc}") from exc
 
 
+def build_carry_relative_strength(
+    parameters: Mapping[str, Any],
+) -> CarryRelativeStrengthStrategy:
+    try:
+        parsed = CarryRelativeStrengthSpec.model_validate(dict(parameters))
+        return CarryRelativeStrengthStrategy(
+            parameters=CarryRelativeStrengthParameters(**parsed.model_dump())
+        )
+    except (TypeError, ValueError, ResearchError) as exc:
+        raise ResearchError(f"invalid carry_relative_strength parameters: {exc}") from exc
+
+
 def build_linear_cross_sectional(
     parameters: Mapping[str, Any],
 ) -> LinearCrossSectionalStrategy:
@@ -190,6 +210,8 @@ def build_volatility_filtered_sma(parameters: Mapping[str, Any]) -> VolatilityFi
 
 
 STRATEGY_FACTORIES: dict[tuple[str, str], StrategyFactory] = {
+    ("carry_relative_strength", "1"): build_carry_relative_strength,
+    ("carry_relative_strength", "v1"): build_carry_relative_strength,
     ("donchian_breakout", "1"): build_donchian_breakout,
     ("donchian_breakout", "v1"): build_donchian_breakout,
     ("funding_carry", "1"): build_funding_carry,
@@ -225,6 +247,7 @@ def build_strategy(
 
 __all__ = [
     "STRATEGY_FACTORIES",
+    "CarryRelativeStrengthSpec",
     "DonchianBreakoutSpec",
     "FundingCarrySpec",
     "LinearCrossSectionalSpec",
@@ -234,6 +257,7 @@ __all__ = [
     "SmaCrossoverSpec",
     "StrategyFactory",
     "VolatilityFilteredSmaSpec",
+    "build_carry_relative_strength",
     "build_donchian_breakout",
     "build_funding_carry",
     "build_linear_cross_sectional",

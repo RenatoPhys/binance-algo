@@ -12,12 +12,18 @@ from binance_algo.research.portfolio.neutral_long_short import (
     NeutralLongShortPolicy,
 )
 from binance_algo.research.portfolio.registry import build_portfolio_policy
+from binance_algo.research.portfolio.two_sleeve_neutral import (
+    BufferedTwoSleeveNeutralParameters,
+    BufferedTwoSleeveNeutralPolicy,
+)
 
 __all__ = [
     "BufferedDirectionalParameters",
     "BufferedDirectionalPolicy",
     "BufferedNeutralLongShortParameters",
     "BufferedNeutralLongShortPolicy",
+    "BufferedTwoSleeveNeutralParameters",
+    "BufferedTwoSleeveNeutralPolicy",
     "NeutralLongShortParameters",
     "NeutralLongShortPolicy",
     "PortfolioPolicy",

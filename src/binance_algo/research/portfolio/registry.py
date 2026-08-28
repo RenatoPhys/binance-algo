@@ -19,6 +19,10 @@ from binance_algo.research.portfolio.neutral_long_short import (
     NeutralLongShortParameters,
     NeutralLongShortPolicy,
 )
+from binance_algo.research.portfolio.two_sleeve_neutral import (
+    BufferedTwoSleeveNeutralParameters,
+    BufferedTwoSleeveNeutralPolicy,
+)
 
 
 class NeutralLongShortSpec(BaseModel):
@@ -39,6 +43,17 @@ class BufferedDirectionalSpec(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     signal_threshold: float = Field(ge=0, le=1)
+    rebalance_interval_hours: int = Field(ge=1, le=24 * 30)
+    gross_exposure: float = Field(gt=0, le=1)
+    annual_volatility_target: float = Field(gt=0, le=1)
+    max_symbol_weight: float = Field(gt=0, le=1)
+
+
+class BufferedTwoSleeveNeutralSpec(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    carry_weight: float = Field(ge=0, le=1)
+    no_trade_score_band: float = Field(ge=0)
     rebalance_interval_hours: int = Field(ge=1, le=24 * 30)
     gross_exposure: float = Field(gt=0, le=1)
     annual_volatility_target: float = Field(gt=0, le=1)
@@ -78,9 +93,23 @@ def build_buffered_directional(parameters: Mapping[str, Any]) -> BufferedDirecti
         raise ResearchError(f"invalid buffered_directional parameters: {exc}") from exc
 
 
+def build_buffered_two_sleeve_neutral(
+    parameters: Mapping[str, Any],
+) -> BufferedTwoSleeveNeutralPolicy:
+    try:
+        parsed = BufferedTwoSleeveNeutralSpec.model_validate(dict(parameters))
+        return BufferedTwoSleeveNeutralPolicy(
+            parameters=BufferedTwoSleeveNeutralParameters(**parsed.model_dump())
+        )
+    except (TypeError, ValueError, ResearchError) as exc:
+        raise ResearchError(f"invalid buffered_two_sleeve_neutral parameters: {exc}") from exc
+
+
 PORTFOLIO_POLICY_FACTORIES: dict[tuple[str, str], PortfolioPolicyFactory] = {
     ("buffered_directional", "1"): build_buffered_directional,
     ("buffered_directional", "v1"): build_buffered_directional,
+    ("buffered_two_sleeve_neutral", "1"): build_buffered_two_sleeve_neutral,
+    ("buffered_two_sleeve_neutral", "v1"): build_buffered_two_sleeve_neutral,
     ("buffered_neutral_long_short", "1"): build_buffered_neutral_long_short,
     ("buffered_neutral_long_short", "v1"): build_buffered_neutral_long_short,
     ("neutral_long_short", "1"): build_neutral_long_short,
@@ -104,10 +133,12 @@ __all__ = [
     "PORTFOLIO_POLICY_FACTORIES",
     "BufferedDirectionalSpec",
     "BufferedNeutralLongShortSpec",
+    "BufferedTwoSleeveNeutralSpec",
     "NeutralLongShortSpec",
     "PortfolioPolicyFactory",
     "build_buffered_directional",
     "build_buffered_neutral_long_short",
+    "build_buffered_two_sleeve_neutral",
     "build_neutral_long_short",
     "build_portfolio_policy",
 ]
