@@ -74,8 +74,8 @@ separadamente. O cálculo é incremental e não materializa todo o dataset com `
 
 `tests/golden/research_phase3_synthetic.json` preserva folds, métricas, schema da curva, primeira e
 última observações e um SHA-256 portátil do conteúdo canônico das 72 linhas OOS. A
-canonicalização preserva 14 dígitos significativos para eliminar apenas variações de 1 ULP entre
-CPUs; mudanças materiais em funding, custos, exposures, turnover ou accounting continuam falhando.
+canonicalização preserva 12 casas decimais para eliminar apenas ruído numérico entre CPUs;
+mudanças materiais em funding, custos, exposures, turnover ou accounting continuam falhando.
 
 O baseline real local continua identificado por `974ab2c8643ace95`; seus artefatos e checksums
 estão registrados em `PROGRESS.md`. Esses resultados são evidência de regressão e rejeição do

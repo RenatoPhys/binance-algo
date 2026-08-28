@@ -33,7 +33,8 @@ def _canonicalize_golden_value(value: Any) -> Any:
     """Remove sub-ULP CPU differences while preserving material golden changes."""
 
     if isinstance(value, float):
-        return "0" if value == 0 else format(value, ".14g")
+        formatted = f"{value:.12f}"
+        return "0.000000000000" if formatted == "-0.000000000000" else formatted
     if isinstance(value, str) and value[:1] in {"{", "["}:
         try:
             return _canonicalize_golden_value(json.loads(value))

@@ -1,6 +1,6 @@
 {
   "curve": {
-    "canonical_rows_sha256": "e8df6d5ba839051d69af516ad96a462b386c73b6b6c02f4d49d9f1bea928d0cd",
+    "canonical_rows_sha256": "7440e3bb9367d49175b0932621c2bc1e9506991d4258305c39bfc53dec164fe0",
     "columns": [
       "fold",
       "decision_time_ms",
