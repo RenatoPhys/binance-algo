@@ -9,6 +9,7 @@ import pytest
 
 from binance_algo.common.errors import InvalidResearchTransition, ResearchStoreError
 from binance_algo.config import load_settings
+from binance_algo.research.experiments.canonical import canonical_json_text
 from binance_algo.research.experiments.migrations import (
     MIGRATION_1,
     Migration,
@@ -29,7 +30,11 @@ from binance_algo.research.experiments.models import (
     VersionedComponent,
 )
 from binance_algo.research.experiments.registry import sync_builtin_registry
-from binance_algo.research.experiments.store import ResearchStore
+from binance_algo.research.experiments.store import (
+    ResearchArtifactRecord,
+    ResearchMetricRecord,
+    ResearchStore,
+)
 from binance_algo.research.features.registry import FeatureSetSpec, phase3_feature_set
 from binance_algo.research.labels.forward_returns import GROSS_FORWARD_RETURN_1H
 
@@ -179,6 +184,33 @@ def test_migration_upgrade_and_failure_rollback(tmp_path: Path) -> None:
     assert store.initialize() == 2
 
 
+def test_feature_set_sync_accepts_legacy_manifest_and_declared_ordinals(tmp_path: Path) -> None:
+    settings = load_settings(BASE_CONFIG)
+    store = ResearchStore(tmp_path / "research.sqlite3")
+    store.initialize()
+    sync_builtin_registry(store, research_config=settings.research)
+    feature_set = phase3_feature_set(settings.research)
+    with store.transaction() as connection:
+        connection.execute(
+            "UPDATE research_feature_sets SET spec_json = ? WHERE feature_set_id = ?",
+            (canonical_json_text(feature_set.to_manifest()), feature_set.feature_set_id),
+        )
+        connection.execute(
+            "UPDATE research_feature_set_members SET ordinal = ordinal + 100 "
+            "WHERE feature_set_id = ?",
+            (feature_set.feature_set_id,),
+        )
+        for ordinal, feature_id in enumerate(feature_set.feature_ids):
+            connection.execute(
+                "UPDATE research_feature_set_members SET ordinal = ? "
+                "WHERE feature_set_id = ? AND feature_id = ?",
+                (ordinal, feature_set.feature_set_id, feature_id),
+            )
+
+    synced = sync_builtin_registry(store, research_config=settings.research)
+    assert synced.feature_set_id == feature_set.feature_set_id
+
+
 def test_hypothesis_and_experiment_registration_are_immutable_and_idempotent(
     tmp_path: Path,
 ) -> None:
@@ -224,6 +256,21 @@ def test_run_state_machine_attempts_success_digest_and_stale_recovery(tmp_path: 
     assert store.mark_stale_runs(stale_before_ms=11) == (second.run_id,)
     store.transition_run(second.run_id, RunStatus.QUEUED)
     store.transition_run(second.run_id, RunStatus.RUNNING)
+    store.record_metric(
+        run_id=second.run_id,
+        scope=MetricScope.TEST,
+        metric_name="sharpe",
+        metric_value=1.0,
+    )
+    store.record_artifact(
+        run_id=second.run_id,
+        artifact_type="metrics",
+        path="relative/metrics.json",
+        checksum_sha256="a" * 64,
+        row_count=None,
+        size_bytes=10,
+        schema_version=1,
+    )
     succeeded = store.transition_run(
         second.run_id,
         RunStatus.SUCCEEDED,
@@ -303,6 +350,40 @@ def test_foreign_keys_metrics_and_artifacts_are_enforced(tmp_path: Path) -> None
             metric_name="invalid",
             metric_value=float("nan"),
         )
+
+
+def test_complete_run_rolls_back_all_outputs_on_conflict(tmp_path: Path) -> None:
+    store = _initialized_store(tmp_path / "research.sqlite3")
+    run = store.create_run(store.list_experiment_ids()[0])
+    store.transition_run(run.run_id, RunStatus.QUEUED)
+    store.transition_run(run.run_id, RunStatus.RUNNING)
+    duplicate = ResearchMetricRecord(
+        scope=MetricScope.TEST,
+        metric_name="sharpe",
+        metric_value=1.0,
+    )
+
+    with pytest.raises(ResearchStoreError, match="UNIQUE"):
+        store.complete_run(
+            run.run_id,
+            result_digest_value="d" * 64,
+            metrics=(duplicate, duplicate),
+            artifacts=(
+                ResearchArtifactRecord(
+                    artifact_type="metrics",
+                    path="relative/metrics.json",
+                    checksum_sha256="a" * 64,
+                    row_count=None,
+                    size_bytes=10,
+                    schema_version=1,
+                ),
+            ),
+        )
+
+    current = store.get_run(run.run_id)
+    assert current is not None and current.status is RunStatus.RUNNING
+    assert store.list_metrics(run.run_id) == ()
+    assert store.list_artifacts(run.run_id) == ()
 
 
 def test_concurrent_run_creation_allocates_distinct_attempts(tmp_path: Path) -> None:

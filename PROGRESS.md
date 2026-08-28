@@ -64,10 +64,14 @@ baseline auditável; seu resultado negativo não foi promovido a alpha. A Fase 4
 - [x] `experiment_id` canônico sem paths, code fingerprint e `result_digest` independente
 - [x] State machines transacionais, recuperação de runs stale e registro concorrente idempotente
 - [x] CLI `research registry`, `research hypothesis` e `research feature`
+- [x] Fase 3.5 PR 5: artifact pipeline temp/promote/quarantine e bundles imutáveis
+- [x] Policies `summary`/`full`, checksums, long-form scores/positions e chart opt-in
+- [x] Experiment runner pelo registry, conclusão SQLite atômica e falha explícita
+- [x] CLI `research experiment list/show/rerun/verify` e baseline legado na rota registrada
+- [x] Rerun com confirmação determinística de `result_digest` e detecção de corrupção
 
 ## Pending
 
-- [ ] PR 5: artifact pipeline atômico e experiment runner
 - [ ] PR 6: campaign planner/runner determinístico com resume/cache
 - [ ] PRs 7–9: ledger/ablações, robustez/promoção, performance e documentação final
 
@@ -104,6 +108,8 @@ baseline auditável; seu resultado negativo não foi promovido a alpha. A Fase 4
   `pytest -m "not network"` com 87 passed/2 deselected
 - gates PR 4: `ruff format --check` em 117 arquivos, `ruff check`, mypy estrito em 70 módulos e
   `pytest -m "not network"` com 105 passed/2 deselected
+- gates PR 5: `ruff format --check` em 123 arquivos, `ruff check`, mypy estrito em 74 módulos e
+  `pytest -m "not network"` com 110 passed/2 deselected
 - registry real: schema 2 em `research.sqlite3`, WAL e foreign keys ativos, 18 features e o
   feature set `phase3_baseline_features:v1`; registro repetido da hipótese
   `HYP-RESMOM-0002` permaneceu idempotente

@@ -146,5 +146,10 @@ DatasetReference + CodeFingerprint + componentes
 O banco `research.sqlite3` é separado do `ingestion.sqlite3`: o primeiro registra decisões e
 resultados de pesquisa, enquanto o segundo continua sendo a autoridade sobre materialização de
 dados. Paths são localizadores operacionais e não participam da identidade do experimento. O
-registro já aceita as definições e o lifecycle de runs, mas a execução e promoção atômica de
-artefatos serão conectadas somente pelo runner do PR 5.
+PR 5 conecta a execução sem criar outro motor. O worker escreve o bundle em `tmp/research`,
+valida Parquet/JSON, checksums e row counts, e promove o diretório inteiro para o layout por
+experiment/run. Uma única transação final registra métricas e artifacts e grava o
+`result_digest`; até esse ponto o run permanece `RUNNING`. Falhas são preservadas em quarantine.
+Scores e posições long-form são materializados somente pela policy `full`; o JSON legado da curva
+permanece apenas para a regressão do baseline. Factories explícitas rejeitam componentes e
+parâmetros não allowlisted.

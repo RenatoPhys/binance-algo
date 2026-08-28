@@ -72,10 +72,15 @@ from binance_algo.doctor import run_doctor
 from binance_algo.exchange.binance_usdm.rest import BinanceUSDMRestClient
 from binance_algo.logging import configure_logging, get_logger
 from binance_algo.observability.metrics import RecorderMetrics
-from binance_algo.research.baseline import run_and_persist_phase3_baseline
 from binance_algo.research.dataset import build_and_persist_research_dataset
+from binance_algo.research.datasets.references import load_dataset_reference
 from binance_algo.research.experiments.models import HypothesisSpec
 from binance_algo.research.experiments.registry import sync_builtin_registry
+from binance_algo.research.experiments.runner import (
+    ExperimentRunner,
+    build_phase3_experiment_spec,
+    phase3_baseline_hypothesis,
+)
 from binance_algo.research.experiments.store import ResearchStore
 
 app = typer.Typer(help="Auditable Binance USD-M Futures public-data foundation.")
@@ -89,6 +94,7 @@ research_app = typer.Typer(help="Build causal datasets and manage reproducible r
 research_registry_app = typer.Typer(help="Initialize and inspect the research registry.")
 research_hypothesis_app = typer.Typer(help="Register and inspect research hypotheses.")
 research_feature_app = typer.Typer(help="Inspect persisted feature definitions.")
+research_experiment_app = typer.Typer(help="Run and verify immutable research experiments.")
 app.add_typer(exchange_info_app, name="exchange-info")
 app.add_typer(universe_app, name="universe")
 app.add_typer(backfill_app, name="backfill")
@@ -99,6 +105,7 @@ app.add_typer(research_app, name="research")
 research_app.add_typer(research_registry_app, name="registry")
 research_app.add_typer(research_hypothesis_app, name="hypothesis")
 research_app.add_typer(research_feature_app, name="feature")
+research_app.add_typer(research_experiment_app, name="experiment")
 console = Console()
 
 
@@ -150,6 +157,15 @@ def _hypothesis_file(path: Path) -> HypothesisSpec:
         return HypothesisSpec.model_validate(payload)
     except (OSError, yaml.YAMLError, ValidationError) as exc:
         raise ResearchError(f"cannot load hypothesis file {path}: {exc}") from exc
+
+
+def _experiment_runner(settings: Settings, store: ResearchStore) -> ExperimentRunner:
+    return ExperimentRunner(
+        store=store,
+        data_root=settings.data_root,
+        research_config=settings.research,
+        compression=settings.storage.parquet_compression,
+    )
 
 
 @app.command()
@@ -760,6 +776,115 @@ def research_feature_show(ctx: typer.Context, feature_id: str) -> None:
     console.print_json(json=orjson.dumps(feature).decode())
 
 
+@research_experiment_app.command("list")
+def research_experiment_list(ctx: typer.Context) -> None:
+    """List immutable experiment definitions and their latest run status."""
+
+    try:
+        settings = _settings(ctx)
+        _configure(settings)
+        store = ResearchStore(settings.research_db_path)
+        identifiers = store.list_experiment_ids()
+    except BinanceAlgoError as exc:
+        _fail(exc)
+    table = Table(title="research experiments")
+    table.add_column("experiment id")
+    table.add_column("latest status")
+    table.add_column("attempt", justify="right")
+    for identifier in identifiers:
+        runs = store.list_runs(experiment_id_value=identifier)
+        latest = runs[-1] if runs else None
+        table.add_row(
+            identifier,
+            latest.status.value if latest is not None else "NOT_RUN",
+            str(latest.attempt) if latest is not None else "-",
+        )
+    console.print(table)
+
+
+@research_experiment_app.command("show")
+def research_experiment_show(ctx: typer.Context, experiment_id: str) -> None:
+    """Show one immutable experiment specification and all attempts."""
+
+    try:
+        settings = _settings(ctx)
+        _configure(settings)
+        store = ResearchStore(settings.research_db_path)
+        spec = store.get_experiment(experiment_id)
+        if spec is None:
+            raise ResearchError(f"unknown experiment: {experiment_id}")
+        runs = store.list_runs(experiment_id_value=experiment_id)
+    except BinanceAlgoError as exc:
+        _fail(exc)
+    console.print_json(
+        json=orjson.dumps(
+            {
+                "experiment_id": experiment_id,
+                "spec": spec.model_dump(mode="json"),
+                "runs": [
+                    {
+                        "run_id": run.run_id,
+                        "attempt": run.attempt,
+                        "status": run.status.value,
+                        "result_digest": run.result_digest,
+                        "error_type": run.error_type,
+                        "error_message": run.error_message,
+                    }
+                    for run in runs
+                ],
+            }
+        ).decode()
+    )
+
+
+@research_experiment_app.command("rerun")
+def research_experiment_rerun(
+    ctx: typer.Context,
+    experiment_id: str,
+    chart: Annotated[
+        bool,
+        typer.Option("--chart", help="Generate an optional P&L SVG outside the result digest."),
+    ] = False,
+) -> None:
+    """Create a new immutable attempt and require the prior result digest to match."""
+
+    try:
+        settings = _settings(ctx)
+        _configure(settings)
+        store = ResearchStore(settings.research_db_path)
+        result = _experiment_runner(settings, store).run(
+            experiment_id,
+            generate_chart=chart,
+        )
+    except (BinanceAlgoError, OSError, pl.exceptions.PolarsError) as exc:
+        _fail(exc if isinstance(exc, BinanceAlgoError) else ResearchError(str(exc)))
+    console.print(
+        f"Experiment rerun succeeded: {result.experiment_id}\n"
+        f"Run: {result.run.run_id} attempt={result.run.attempt}\n"
+        f"Result digest: {result.run.result_digest}\n"
+        f"Determinism: {'CONFIRMED' if result.deterministic_with_previous else 'FIRST_RUN'}\n"
+        f"Artifacts: {result.artifact_directory}"
+    )
+
+
+@research_experiment_app.command("verify")
+def research_experiment_verify(ctx: typer.Context, experiment_id: str) -> None:
+    """Verify every registered checksum, size, row count, and the result digest."""
+
+    try:
+        settings = _settings(ctx)
+        _configure(settings)
+        store = ResearchStore(settings.research_db_path)
+        verification = _experiment_runner(settings, store).verify_experiment(experiment_id)
+        if not verification.valid:
+            raise ResearchError("; ".join(verification.issues))
+    except BinanceAlgoError as exc:
+        _fail(exc)
+    console.print(
+        f"Experiment artifacts PASS: run={verification.run_id}, files={verification.checked_files}"
+    )
+
+
 @research_app.command("build")
 def research_build(
     ctx: typer.Context,
@@ -834,42 +959,52 @@ def research_backtest(
         )
         if not dataset_path.is_file():
             raise DataQualityError(f"research dataset does not exist: {dataset_path}")
-        result = run_and_persist_phase3_baseline(
-            dataset_path=dataset_path,
-            storage=LocalFilesystemStorage(settings.data_root),
-            reports_root=settings.reports_root,
-            compression=settings.storage.parquet_compression,
+        manifest_path = dataset_path.with_suffix(".json")
+        reference = load_dataset_reference(manifest_path)
+        store = ResearchStore(settings.research_db_path)
+        store.initialize()
+        sync_builtin_registry(store, research_config=settings.research)
+        store.register_hypothesis(phase3_baseline_hypothesis())
+        spec = build_phase3_experiment_spec(
+            dataset_reference=reference,
             config=settings.research,
+            project_root=settings.project_root,
+        )
+        experiment_id = store.register_experiment(spec)
+        result = _experiment_runner(settings, store).run(
+            experiment_id,
             generate_chart=chart,
         )
     except (BinanceAlgoError, OSError, pl.exceptions.PolarsError) as exc:
         if isinstance(exc, BinanceAlgoError):
             _fail(exc)
         _fail(DataQualityError(str(exc)))
-    metrics = result.metrics
+    metric_values = {
+        metric.metric_name: metric.metric_value
+        for metric in store.list_metrics(result.run.run_id)
+        if metric.scope.value == "TEST" and metric.fold is None and metric.regime is None
+    }
     table = Table(title="Phase 3 walk-forward baseline")
     table.add_column("metric")
     table.add_column("out-of-sample", justify="right")
     for name, value in (
-        ("folds", str(result.fold_count)),
-        ("periods", str(metrics.periods)),
-        ("total return", f"{metrics.total_return:.4%}"),
-        ("Sharpe", f"{metrics.sharpe:.3f}"),
-        ("max drawdown", f"{metrics.max_drawdown:.4%}"),
-        ("turnover", f"{metrics.turnover:.3f}"),
-        ("funding P&L", f"{metrics.funding_pnl:.6f}"),
-        ("accounting error", f"{metrics.accounting_error_max:.3e}"),
+        ("periods", str(int(metric_values["periods"]))),
+        ("total return", f"{metric_values['total_return']:.4%}"),
+        ("Sharpe", f"{metric_values['sharpe']:.3f}"),
+        ("max drawdown", f"{metric_values['max_drawdown']:.4%}"),
+        ("turnover", f"{metric_values['turnover']:.3f}"),
+        ("funding P&L", f"{metric_values['funding_pnl']:.6f}"),
+        ("accounting error", f"{metric_values['accounting_error_max']:.3e}"),
     ):
         table.add_row(name, value)
     console.print(table)
     output = (
         "Baseline only; no claim of edge.\n"
-        f"Run version: {result.run_version}\n"
-        f"Curve: {result.curve_path}\n"
-        f"Reports: {result.report_json_path}\n         {result.report_markdown_path}"
+        f"Experiment: {result.experiment_id}\n"
+        f"Run: {result.run.run_id}\n"
+        f"Result digest: {result.run.result_digest}\n"
+        f"Artifacts: {result.artifact_directory}"
     )
-    if result.report_chart_path is not None:
-        output += f"\nChart: {result.report_chart_path}"
     console.print(output)
 
 
