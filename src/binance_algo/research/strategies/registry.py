@@ -21,6 +21,10 @@ from binance_algo.research.strategies.linear_cross_sectional import (
     LinearCrossSectionalParameters,
     LinearCrossSectionalStrategy,
 )
+from binance_algo.research.strategies.relative_strength import (
+    RelativeStrengthParameters,
+    RelativeStrengthStrategy,
+)
 from binance_algo.research.strategies.residual_mean_reversion import (
     ResidualMeanReversionParameters,
     ResidualMeanReversionStrategy,
@@ -75,6 +79,12 @@ class ResidualMeanReversionSpec(BaseModel):
     momentum_weight_1h: float = Field(ge=0, le=1)
     momentum_weight_4h: float = Field(ge=0, le=1)
     volatility_adjustment: float = Field(ge=0, le=2)
+
+
+class RelativeStrengthSpec(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    lookback_hours: int = Field(ge=24, le=24 * 90)
 
 
 class SmaCrossoverSpec(BaseModel):
@@ -143,6 +153,16 @@ def build_residual_mean_reversion(
         raise ResearchError(f"invalid residual_mean_reversion parameters: {exc}") from exc
 
 
+def build_relative_strength(parameters: Mapping[str, Any]) -> RelativeStrengthStrategy:
+    try:
+        parsed = RelativeStrengthSpec.model_validate(dict(parameters))
+        return RelativeStrengthStrategy(
+            parameters=RelativeStrengthParameters(**parsed.model_dump())
+        )
+    except (TypeError, ValueError, ResearchError) as exc:
+        raise ResearchError(f"invalid relative_strength parameters: {exc}") from exc
+
+
 def build_sma_crossover(parameters: Mapping[str, Any]) -> SmaCrossoverStrategy:
     try:
         parsed = SmaCrossoverSpec.model_validate(dict(parameters))
@@ -178,6 +198,8 @@ STRATEGY_FACTORIES: dict[tuple[str, str], StrategyFactory] = {
     ("linear_cross_sectional", "v1"): build_linear_cross_sectional,
     ("residual_momentum", "1"): build_residual_momentum,
     ("residual_momentum", "v1"): build_residual_momentum,
+    ("relative_strength", "1"): build_relative_strength,
+    ("relative_strength", "v1"): build_relative_strength,
     ("residual_mean_reversion", "1"): build_residual_mean_reversion,
     ("residual_mean_reversion", "v1"): build_residual_mean_reversion,
     ("sma_crossover", "1"): build_sma_crossover,
@@ -206,6 +228,7 @@ __all__ = [
     "DonchianBreakoutSpec",
     "FundingCarrySpec",
     "LinearCrossSectionalSpec",
+    "RelativeStrengthSpec",
     "ResidualMeanReversionSpec",
     "ResidualMomentumSpec",
     "SmaCrossoverSpec",
@@ -214,6 +237,7 @@ __all__ = [
     "build_donchian_breakout",
     "build_funding_carry",
     "build_linear_cross_sectional",
+    "build_relative_strength",
     "build_residual_mean_reversion",
     "build_residual_momentum",
     "build_sma_crossover",

@@ -17,6 +17,11 @@ from binance_algo.research.strategies.linear_cross_sectional import (
     LinearCrossSectionalStrategy,
 )
 from binance_algo.research.strategies.registry import build_strategy
+from binance_algo.research.strategies.relative_strength import (
+    RELATIVE_STRENGTH_FEATURES,
+    RelativeStrengthParameters,
+    RelativeStrengthStrategy,
+)
 from binance_algo.research.strategies.residual_mean_reversion import (
     ResidualMeanReversionParameters,
     ResidualMeanReversionStrategy,
@@ -35,6 +40,7 @@ from binance_algo.research.strategies.sma_crossover import (
 __all__ = [
     "DONCHIAN_BREAKOUT_FEATURES",
     "LINEAR_CROSS_SECTIONAL_FEATURES",
+    "RELATIVE_STRENGTH_FEATURES",
     "SMA_CROSSOVER_FEATURES",
     "DonchianBreakoutParameters",
     "DonchianBreakoutStrategy",
@@ -45,6 +51,8 @@ __all__ = [
     "FundingCarryStrategy",
     "LinearCrossSectionalParameters",
     "LinearCrossSectionalStrategy",
+    "RelativeStrengthParameters",
+    "RelativeStrengthStrategy",
     "ResidualMeanReversionParameters",
     "ResidualMeanReversionStrategy",
     "ResidualMomentumParameters",
