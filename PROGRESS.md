@@ -2,8 +2,9 @@
 
 ## Current milestone
 
-Fase 3.5 — plataforma de experimentos e pesquisa em escala. A Fase 3 permanece como golden
-baseline auditável; seu resultado negativo não foi promovido a alpha. A Fase 4 não foi iniciada.
+Fase 3.5 — plataforma de experimentos e pesquisa em escala — concluída. A Fase 3 permanece como
+golden baseline auditável; seu resultado negativo não foi promovido a alpha. A Fase 4 não foi
+iniciada.
 
 ## Completed
 
@@ -83,10 +84,18 @@ baseline auditável; seu resultado negativo não foi promovido a alpha. A Fase 4
 - [x] Candidate report com distribuição integral da campanha e melhor trial contextualizado
 - [x] Eventos auditáveis de promoção/bloqueio/rejeição e state machine de estágios
 - [x] Git dirty bloqueado, lockbox ausente reportada e promoção para Fase 4 impedida
+- [x] Fase 3.5 PR 9: `PanelData` imutável com features/outcomes/metadata e availability explícita
+- [x] Lazy Parquet scan com column projection e cache LRU por process worker
+- [x] Painel reutilizado entre trials, folds e cenários; conversões long/wide sem `iter_rows`
+- [x] Modelo interno preparado para exclusão localizada sem alegar universo histórico inexistente
+- [x] Benchmark slow de 30 símbolos, 2 anos horários, 20 features e 100 trials
+- [x] README, architecture, operations, data contracts, research protocol, changelog e ADR 0014
+- [x] Bump coerente para 0.6.0 e aceite integral da Fase 3.5
 
 ## Pending
 
-- [ ] PR 9: performance e documentação final
+- Fase 4 permanece deliberadamente não iniciada; depende de candidato robusto e lockbox
+  independente.
 
 ## Blockers
 
@@ -129,6 +138,12 @@ baseline auditável; seu resultado negativo não foi promovido a alpha. A Fase 4
   `pytest -m "not network"` com 119 passed/2 deselected
 - gates PR 8: `ruff format --check` em 141 arquivos, `ruff check`, mypy estrito em 83 módulos e
   `pytest -m "not network"` com 123 passed/2 deselected
+- benchmark PR 9: 525.600 linhas, 30 símbolos, 17.520 horas, 20 features e 100 trials; números
+  observados: carga 0,271s, total de trials 0,328s, média 3,284ms/trial, painel 99.478.560 bytes,
+  Parquet 36.808.339 bytes e artifact 2.655 bytes; cache 1 hit/1 miss. O relatório fica em
+  `var/reports/panel_benchmark.json` e não constitui SLA
+- gates PR 9: `ruff format --check` em 145 arquivos, `ruff check`, mypy estrito em 84 módulos e
+  `pytest -m "not network"` com 128 passed/2 deselected
 - registry real: schema 4 em `research.sqlite3`, WAL e foreign keys ativos, 18 features e o
   feature set `phase3_baseline_features:v1`; registro repetido da hipótese
   `HYP-RESMOM-0002` permaneceu idempotente

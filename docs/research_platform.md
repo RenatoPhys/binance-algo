@@ -2,13 +2,14 @@
 
 ## Estado do incremento
 
-Os PRs 1 a 8 estão implementados. O golden baseline permanece como referência e o motor agora
+Os PRs 1 a 9 estão implementados e a Fase 3.5 está concluída. O golden baseline permanece como referência e o motor agora
 recebe `Strategy` e `PortfolioPolicy`, usando treino e teste reais em cada fold. Residual momentum
 e neutral long/short são as primeiras implementações dos contratos. Feature/label registries,
 roles de schema, dataset views e fingerprint `lineage_v2` estão ativos. A CLI legada usa essa
 rota por meio de um adaptador explícito; não existe segundo motor. `ResearchStore`, experiment
 registry, code fingerprint, artifact pipeline, experiment/campaign runners, feature ledger,
-multiple-testing adjustment e promotion gates estão ativos.
+multiple-testing adjustment, promotion gates, `PanelData` reutilizável, column projection e cache
+por worker estão ativos. A Fase 4 não foi iniciada.
 
 ## Fronteiras arquiteturais
 
@@ -59,6 +60,10 @@ política converte esses scores em pesos antes da contabilidade.
   OOS.
 - `NeutralLongShortPolicy`: seleção de caudas, no-trade band, neutralização net/beta, volatility
   target, limite por símbolo e trava contra alavancagem econômica.
+- `PanelData`: arrays read-only separados em features, outcomes e metadata, mapa estável de
+  símbolos e availability explícita para reutilização entre trials.
+- `WorkerDatasetCache`: LRU process-local que usa lazy Parquet scan e projeção exata das colunas
+  requeridas pelo spec e pela contabilidade.
 
 As únicas chaves entregues ao scoring são `decision_time_ms` e `symbol`. Features precisam ser
 declaradas explicitamente, existir no registry e ter role `FEATURE`. A checagem de prefixos
@@ -202,7 +207,10 @@ dataset/período independente e evento `LOCKBOX_EVALUATED` aprovado.
 
 ## Próximos incrementos
 
-1. otimizar o painel e concluir documentação/aceite.
+1. pré-registrar screenings pequenos de momentum lento, funding carry e mean reversion residual;
+2. ampliar histórico e capturar metadata point-in-time para um universo dinâmico legítimo;
+3. reservar uma lockbox independente antes de qualquer avaliação para Fase 4.
 
 Campanhas extensas continuam condicionadas aos guards, protocolo de pesquisa e gates de promoção;
-o ledger não transforma screening repetido em evidência independente.
+o ledger não transforma screening repetido em evidência independente. A Fase 4 permanece pendente;
+não há strategy promovida, simulator, autenticação ou envio de ordens.

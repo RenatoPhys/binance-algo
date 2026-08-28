@@ -16,6 +16,7 @@ from binance_algo.research.contracts import (
     TrainingDataset,
 )
 from binance_algo.research.datasets.views import build_feature_view
+from binance_algo.research.panel import PanelData, matrix_to_long_frame
 
 RESIDUAL_MOMENTUM_FEATURES = (
     "residual_momentum_1h",
@@ -67,10 +68,19 @@ def _validate_context_range(
 def _cross_sectional_zscore(
     values: np.ndarray[Any, np.dtype[np.float64]],
 ) -> np.ndarray[Any, np.dtype[np.float64]]:
-    standard_deviation = float(np.std(values))
-    if standard_deviation <= 1e-15:
-        return np.zeros_like(values)
-    return (values - float(np.mean(values))) / standard_deviation
+    if values.ndim == 1:
+        standard_deviation = float(np.std(values))
+        if standard_deviation <= 1e-15:
+            return np.zeros_like(values)
+        return (values - float(np.mean(values))) / standard_deviation
+    means = np.mean(values, axis=1, keepdims=True)
+    standard_deviations = np.std(values, axis=1, keepdims=True)
+    return np.divide(
+        values - means,
+        standard_deviations,
+        out=np.zeros_like(values),
+        where=standard_deviations > 1e-15,
+    )
 
 
 def _feature_panel(
@@ -80,24 +90,49 @@ def _feature_panel(
     np.ndarray[Any, np.dtype[np.int64]],
     dict[str, np.ndarray[Any, np.dtype[np.float64]]],
 ]:
-    symbols = tuple(sorted(str(value) for value in features["symbol"].unique().to_list()))
-    times = np.asarray(sorted(features["decision_time_ms"].unique().to_list()), dtype=np.int64)
-    if features.height != len(times) * len(symbols):
-        raise ResearchError("residual momentum feature panel is incomplete")
+    panel = PanelData.from_frame(features, feature_columns=RESIDUAL_MOMENTUM_FEATURES)
+    panel.require_complete(role="residual momentum feature")
+    return panel.symbols, panel.times, dict(panel.features)
+
+
+def _score_panel_data(
+    panel: PanelData,
+    *,
+    parameters: ResidualMomentumParameters,
+    context: FoldContext,
+) -> StrategyScores:
+    panel.require_complete_range(
+        context.test_start_ms,
+        context.test_end_ms,
+        role="residual momentum scoring",
+    )
+    time_slice = panel.time_slice(context.test_start_ms, context.test_end_ms)
+    times = panel.times[time_slice]
     arrays = {
-        feature: np.full((len(times), len(symbols)), np.nan, dtype=np.float64)
+        feature: np.asarray(
+            panel.matrix(
+                feature,
+                start_ms=context.test_start_ms,
+                end_ms=context.test_end_ms,
+            ),
+            dtype=np.float64,
+        )
         for feature in RESIDUAL_MOMENTUM_FEATURES
     }
-    time_index = {int(value): index for index, value in enumerate(times)}
-    symbol_index = {symbol: index for index, symbol in enumerate(symbols)}
-    for row in features.iter_rows(named=True):
-        x = time_index[int(row["decision_time_ms"])]
-        y = symbol_index[str(row["symbol"])]
-        for feature in RESIDUAL_MOMENTUM_FEATURES:
-            arrays[feature][x, y] = float(row[feature])
-    if any(np.any(~np.isfinite(values)) for values in arrays.values()):
-        raise ResearchError("residual momentum features are incomplete or non-finite")
-    return symbols, times, arrays
+    weights = parameters.as_tuple()
+    score_matrix = (
+        weights[0] * _cross_sectional_zscore(arrays["residual_momentum_1h"])
+        + weights[1] * _cross_sectional_zscore(arrays["residual_momentum_4h"])
+        + weights[2] * _cross_sectional_zscore(arrays["residual_momentum_24h"])
+    )
+    return StrategyScores(
+        matrix_to_long_frame(
+            times=times,
+            symbols=panel.symbols,
+            value_name="score",
+            values=score_matrix,
+        )
+    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -117,25 +152,14 @@ class FittedResidualMomentumStrategy:
             end_ms=context.test_end_ms,
             role="residual momentum scoring frame",
         )
-        symbols, times, arrays = _feature_panel(projected)
-        weights = self.parameters.as_tuple()
-        score_matrix = np.empty_like(arrays["residual_momentum_1h"])
-        for period in range(len(times)):
-            score_matrix[period] = (
-                weights[0] * _cross_sectional_zscore(arrays["residual_momentum_1h"][period])
-                + weights[1] * _cross_sectional_zscore(arrays["residual_momentum_4h"][period])
-                + weights[2] * _cross_sectional_zscore(arrays["residual_momentum_24h"][period])
-            )
-        rows = [
-            {
-                "decision_time_ms": int(decision_time),
-                "symbol": symbol,
-                "score": float(score_matrix[time_index, symbol_index]),
-            }
-            for time_index, decision_time in enumerate(times)
-            for symbol_index, symbol in enumerate(symbols)
-        ]
-        return StrategyScores(pl.DataFrame(rows))
+        return _score_panel_data(
+            PanelData.from_frame(projected, feature_columns=RESIDUAL_MOMENTUM_FEATURES),
+            parameters=self.parameters,
+            context=context,
+        )
+
+    def score_panel(self, features: PanelData, *, context: FoldContext) -> StrategyScores:
+        return _score_panel_data(features, parameters=self.parameters, context=context)
 
 
 @dataclass(frozen=True, slots=True)
@@ -171,6 +195,28 @@ class ResidualMomentumStrategy:
         _feature_panel(projected)
         if train.target is not None:
             raise ResearchError("residual momentum is non-trainable and does not accept a target")
+        return FittedResidualMomentumStrategy(parameters=self.parameters)
+
+    def fit_panel(
+        self,
+        train: PanelData,
+        *,
+        target: pl.DataFrame | None,
+        context: FoldContext,
+    ) -> FittedResidualMomentumStrategy:
+        if target is not None:
+            raise ResearchError("residual momentum is non-trainable and does not accept a target")
+        train.require_complete_range(
+            context.train_start_ms,
+            context.train_end_ms,
+            role="residual momentum training",
+        )
+        for feature in self.required_features():
+            train.matrix(
+                feature,
+                start_ms=context.train_start_ms,
+                end_ms=context.train_end_ms,
+            )
         return FittedResidualMomentumStrategy(parameters=self.parameters)
 
 

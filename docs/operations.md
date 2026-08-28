@@ -138,6 +138,39 @@ fonte de verdade continua sendo o registry com foreign keys para runs e features
 `lockbox_manifest` estiver ausente ou o estágio não for `LOCKBOX_EVALUATED`. Nunca altere a config
 para apontar o mesmo dataset de desenvolvimento como lockbox.
 
+## Aceite da plataforma e benchmark
+
+O smoke oficial exercita planejamento, execução, resume/cache e comparação completa:
+
+```bash
+uv run binance-algo --config configs/research.yaml research registry init
+uv run binance-algo --config configs/research.yaml research registry status
+uv run binance-algo --config configs/research.yaml research campaign plan \
+  --file configs/experiments/smoke_residual_momentum.yaml
+uv run binance-algo --config configs/research.yaml research campaign run \
+  --file configs/experiments/smoke_residual_momentum.yaml
+uv run binance-algo --config configs/research.yaml research campaign status \
+  smoke_residual_momentum
+uv run binance-algo --config configs/research.yaml research campaign compare \
+  smoke_residual_momentum
+```
+
+No segundo `campaign run`, `executed_count` deve ser zero e todos os trials íntegros devem aparecer
+como cache hits. Cache científico depende do `experiment_id` e da verificação de artifacts. Em
+separado, cada processo worker mantém até dois datasets projetados em memória para que trials
+pendentes não releiam o mesmo Parquet.
+
+O benchmark de capacidade é deliberadamente não bloqueante:
+
+```bash
+uv run python scripts/benchmark_panel.py
+```
+
+O default cria em diretório temporário 525.600 linhas (30 símbolos × 17.520 horas), 20 features e
+100 trials simples. O JSON atômico `var/reports/panel_benchmark.json` registra load time, média por
+trial, memória aproximada, tamanho do Parquet e do artifact. Compare relatórios entre commits para
+detectar regressões grosseiras; não transforme a medição dependente do host em SLA do CI.
+
 ## Falhas conhecidas e resposta
 
 - DNS/rede indisponível: o cliente encerra após retries limitados e informa o endpoint.

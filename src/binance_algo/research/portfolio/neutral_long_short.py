@@ -16,6 +16,7 @@ from binance_algo.research.contracts import (
     StrategyScores,
 )
 from binance_algo.research.datasets.views import build_feature_view
+from binance_algo.research.panel import PanelData, matrix_to_long_frame
 
 NEUTRAL_LONG_SHORT_FEATURES = ("rolling_beta", "realized_volatility_24h")
 
@@ -104,24 +105,92 @@ def _aligned_panel(
     ):
         raise ResearchError("strategy scores and portfolio market state keys must align exactly")
     panel = score_frame.join(market_frame, on=list(FEATURE_KEY_COLUMNS), how="inner")
-    symbols = tuple(sorted(str(value) for value in panel["symbol"].unique().to_list()))
-    times = np.asarray(sorted(panel["decision_time_ms"].unique().to_list()), dtype=np.int64)
-    if panel.height != len(times) * len(symbols):
-        raise ResearchError("portfolio input panel is incomplete")
     fields = ("score", *NEUTRAL_LONG_SHORT_FEATURES)
-    arrays = {
-        name: np.full((len(times), len(symbols)), np.nan, dtype=np.float64) for name in fields
-    }
-    time_index = {int(value): index for index, value in enumerate(times)}
-    symbol_index = {symbol: index for index, symbol in enumerate(symbols)}
-    for row in panel.iter_rows(named=True):
-        x = time_index[int(row["decision_time_ms"])]
-        y = symbol_index[str(row["symbol"])]
-        for name in fields:
-            arrays[name][x, y] = float(row[name])
-    if any(np.any(~np.isfinite(values)) for values in arrays.values()):
-        raise ResearchError("portfolio inputs are incomplete or non-finite")
-    return symbols, times, arrays
+    panel_data = PanelData.from_frame(panel, feature_columns=fields)
+    panel_data.require_complete(role="portfolio input")
+    return panel_data.symbols, panel_data.times, dict(panel_data.features)
+
+
+def _aligned_panel_data(
+    scores: StrategyScores,
+    market_state: PanelData,
+    *,
+    context: FoldContext,
+) -> tuple[
+    tuple[str, ...],
+    np.ndarray[Any, np.dtype[np.int64]],
+    dict[str, np.ndarray[Any, np.dtype[np.float64]]],
+]:
+    score_panel = PanelData.from_frame(scores.frame, feature_columns=("score",))
+    time_slice = market_state.time_slice(context.test_start_ms, context.test_end_ms)
+    times = market_state.times[time_slice]
+    market_state.require_complete_range(
+        context.test_start_ms,
+        context.test_end_ms,
+        role="portfolio market state",
+    )
+    if score_panel.symbols != market_state.symbols or not np.array_equal(score_panel.times, times):
+        raise ResearchError("strategy scores and portfolio market state keys must align exactly")
+    arrays = {"score": np.asarray(score_panel.features["score"], dtype=np.float64)}
+    arrays.update(
+        {
+            feature: np.asarray(
+                market_state.matrix(
+                    feature,
+                    start_ms=context.test_start_ms,
+                    end_ms=context.test_end_ms,
+                ),
+                dtype=np.float64,
+            )
+            for feature in NEUTRAL_LONG_SHORT_FEATURES
+        }
+    )
+    return market_state.symbols, times, arrays
+
+
+def _target_weight_frame(
+    *,
+    symbols: tuple[str, ...],
+    times: np.ndarray[Any, np.dtype[np.int64]],
+    arrays: dict[str, np.ndarray[Any, np.dtype[np.float64]]],
+    parameters: NeutralLongShortParameters,
+    context: FoldContext,
+) -> pl.DataFrame:
+    if int(times[0]) < context.test_start_ms or int(times[-1]) > context.test_end_ms:
+        raise ResearchError("portfolio input contains decisions outside its fold context")
+    targets = np.empty_like(arrays["score"])
+    previous_top: int | None = None
+    previous_bottom: int | None = None
+    band = parameters.no_trade_score_band
+    for period in range(len(times)):
+        top = int(np.argmax(arrays["score"][period]))
+        bottom = int(np.argmin(arrays["score"][period]))
+        if (
+            previous_top is not None
+            and arrays["score"][period, top] - arrays["score"][period, previous_top] <= band
+        ):
+            top = previous_top
+        if (
+            previous_bottom is not None
+            and arrays["score"][period, previous_bottom] - arrays["score"][period, bottom] <= band
+        ):
+            bottom = previous_bottom
+        if top == bottom:
+            raise ResearchError("cross-sectional score did not produce distinct tails")
+        targets[period] = _neutral_weights(
+            top_index=top,
+            bottom_index=bottom,
+            betas=arrays["rolling_beta"][period],
+            realized_volatility=arrays["realized_volatility_24h"][period],
+            parameters=parameters,
+        )
+        previous_top, previous_bottom = top, bottom
+    return matrix_to_long_frame(
+        times=times,
+        symbols=symbols,
+        value_name="target_weight",
+        values=targets,
+    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -143,46 +212,29 @@ class NeutralLongShortPolicy:
         context: FoldContext,
     ) -> pl.DataFrame:
         symbols, times, arrays = _aligned_panel(scores, market_state)
-        if int(times[0]) < context.test_start_ms or int(times[-1]) > context.test_end_ms:
-            raise ResearchError("portfolio input contains decisions outside its fold context")
-        targets = np.empty_like(arrays["score"])
-        previous_top: int | None = None
-        previous_bottom: int | None = None
-        band = self.parameters.no_trade_score_band
-        for period in range(len(times)):
-            top = int(np.argmax(arrays["score"][period]))
-            bottom = int(np.argmin(arrays["score"][period]))
-            if (
-                previous_top is not None
-                and arrays["score"][period, top] - arrays["score"][period, previous_top] <= band
-            ):
-                top = previous_top
-            if (
-                previous_bottom is not None
-                and arrays["score"][period, previous_bottom] - arrays["score"][period, bottom]
-                <= band
-            ):
-                bottom = previous_bottom
-            if top == bottom:
-                raise ResearchError("cross-sectional score did not produce distinct tails")
-            targets[period] = _neutral_weights(
-                top_index=top,
-                bottom_index=bottom,
-                betas=arrays["rolling_beta"][period],
-                realized_volatility=arrays["realized_volatility_24h"][period],
-                parameters=self.parameters,
-            )
-            previous_top, previous_bottom = top, bottom
-        rows = [
-            {
-                "decision_time_ms": int(decision_time),
-                "symbol": symbol,
-                "target_weight": float(targets[time_index, symbol_index]),
-            }
-            for time_index, decision_time in enumerate(times)
-            for symbol_index, symbol in enumerate(symbols)
-        ]
-        return pl.DataFrame(rows)
+        return _target_weight_frame(
+            symbols=symbols,
+            times=times,
+            arrays=arrays,
+            parameters=self.parameters,
+            context=context,
+        )
+
+    def target_weights_panel(
+        self,
+        scores: StrategyScores,
+        market_state: PanelData,
+        *,
+        context: FoldContext,
+    ) -> pl.DataFrame:
+        symbols, times, arrays = _aligned_panel_data(scores, market_state, context=context)
+        return _target_weight_frame(
+            symbols=symbols,
+            times=times,
+            arrays=arrays,
+            parameters=self.parameters,
+            context=context,
+        )
 
 
 __all__ = [

@@ -9,8 +9,9 @@ uma plataforma reproduzível de pesquisa: o golden baseline está preservado e e
 portfólio e engine usam contratos separados; feature/label registries, dataset views com roles e
 fingerprint de lineage v2 já estão ativos. O `ResearchStore` persiste hipóteses, componentes,
 experimentos imutáveis, tentativas, métricas e artefatos por identidade canônica. O artifact
-pipeline e o experiment runner já promovem bundles atômicos e verificáveis. Não há autenticação,
-simulador de execução, Demo Trading ou envio de ordens.
+pipeline e o experiment runner promovem bundles atômicos e verificáveis; campanhas reutilizam um
+`PanelData` imutável carregado com projeção de colunas uma vez por worker. A Fase 3.5 está
+concluída. Não há autenticação, simulador de execução, Demo Trading ou envio de ordens.
 
 ## Segurança por padrão
 
@@ -193,6 +194,22 @@ desnecessários durante sweeps com muitos backtests.
 O baseline é um teste end-to-end, não uma recomendação. Na janela validada de 90 dias ele foi
 negativo depois dos custos, e essa evidência foi preservada sem otimização retrospectiva.
 
+## Performance local reproduzível
+
+O experiment runner usa `scan_parquet().select(...)`, mantém um cache LRU por processo e
+compartilha arrays read-only entre baseline, estresses e trials do mesmo worker. O benchmark
+observacional padrão cobre 30 símbolos, dois anos horários, 20 features e 100 trials simples:
+
+```bash
+uv run python scripts/benchmark_panel.py
+```
+
+O relatório atômico em `var/reports/panel_benchmark.json` registra carga, tempo médio por trial,
+memória aproximada do painel e tamanhos do dataset/artifact. Ele não define SLA nem roda no gate
+comum. Os campos de disponibilidade preparam painéis parciais, mas o universo atual continua sendo
+o seed fixo de três símbolos; não há metadata histórica suficiente para backtest de universo
+dinâmico sem survivorship bias.
+
 ## Configuração
 
 `configs/base.yaml` contém todos os defaults. Os overlays `demo.yaml`, `research.yaml` e
@@ -226,11 +243,10 @@ O volume `./var` preserva datasets locais. A imagem fixa as duas flags de segura
 
 ## Próximo marco
 
-A Fase 3.5 é a plataforma de experimentos e pesquisa em escala. Golden regression, contratos,
-extração de residual momentum/neutral long-short e registries/views do dataset estão concluídos;
-consulte [docs/research_platform.md](docs/research_platform.md). `ResearchStore`, migrations,
-code fingerprint, identidade imutável, artifacts, experiment/campaign runners, ledger contextual,
-DSR/PBO condicional e promotion gates também estão concluídos. O próximo incremento fecha
-performance/documentação final. A Fase 4 não foi iniciada. Demo
-Trading, alpha promovido e live permanecem fora de escopo; `LIVE_TRADING` e envio de ordens
-continuam impossíveis por configuração.
+A Fase 3.5 — plataforma de experimentos e pesquisa em escala — está concluída. Golden regression,
+contratos, registries/views, `ResearchStore`, artifacts atômicos, campaigns com resume/cache,
+ledger contextual, DSR/PBO condicional, promotion gates e o painel reutilizável estão cobertos por
+testes e documentação; consulte [docs/research_platform.md](docs/research_platform.md). A Fase 4
+permanece pendente e condicionada a uma hipótese candidata e lockbox independente. Demo Trading,
+alpha promovido e live permanecem fora de escopo; `LIVE_TRADING` e envio de ordens continuam
+impossíveis por configuração.

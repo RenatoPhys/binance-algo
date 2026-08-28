@@ -23,11 +23,24 @@ from binance_algo.research.contracts import (
     TrainingDataset,
 )
 from binance_algo.research.datasets.views import build_feature_view, build_target_view
-from binance_algo.research.portfolio.base import PortfolioPolicy
-from binance_algo.research.strategies.base import Strategy
+from binance_algo.research.panel import WORKER_DATASET_CACHE, PanelData
+from binance_algo.research.portfolio.base import PanelPortfolioPolicy, PortfolioPolicy
+from binance_algo.research.strategies.base import PanelFittedStrategy, PanelStrategy, Strategy
 from binance_algo.research.visualization import render_pnl_svg
 
 HOURS_PER_YEAR = 24 * 365
+ACCOUNTING_OUTCOME_FIELDS = (
+    "future_return_1h",
+    "future_residual_return_1h",
+    "outcome_funding_rate_1h",
+    "outcome_quote_volume_1h",
+)
+ACCOUNTING_METADATA_FIELDS = (
+    "market_volatility_regime",
+    "execution_time_ms",
+    "label_end_time_ms",
+)
+ACCOUNTING_FIELDS = ("rolling_beta", *ACCOUNTING_OUTCOME_FIELDS, *ACCOUNTING_METADATA_FIELDS)
 
 
 @dataclass(frozen=True, slots=True)
@@ -161,26 +174,9 @@ def _wide_arrays(
     np.ndarray[Any, np.dtype[np.int64]],
     dict[str, np.ndarray[Any, np.dtype[np.float64]]],
 ]:
-    symbols = tuple(sorted(str(value) for value in frame["symbol"].unique().to_list()))
-    times = np.asarray(sorted(frame["decision_time_ms"].unique().to_list()), dtype=np.int64)
-    missing = sorted(set(fields).difference(frame.columns))
-    if missing:
-        raise ResearchError(f"backtest input is missing required columns: {missing}")
-    if frame.height != len(times) * len(symbols):
-        raise ResearchError("backtest input panel is incomplete")
-    arrays = {
-        field: np.full((len(times), len(symbols)), np.nan, dtype=np.float64) for field in fields
-    }
-    time_index = {int(value): index for index, value in enumerate(times)}
-    symbol_index = {symbol: index for index, symbol in enumerate(symbols)}
-    for row in frame.iter_rows(named=True):
-        x = time_index[int(row["decision_time_ms"])]
-        y = symbol_index[str(row["symbol"])]
-        for field in fields:
-            arrays[field][x, y] = float(row[field])
-    if any(np.any(~np.isfinite(values)) for values in arrays.values()):
-        raise ResearchError("backtest input is incomplete or non-finite")
-    return symbols, times, arrays
+    panel = PanelData.from_frame(frame, outcome_columns=fields)
+    panel.require_complete(role="backtest input")
+    return panel.symbols, panel.times, dict(panel.outcomes)
 
 
 def _long_value_matrix(
@@ -195,24 +191,14 @@ def _long_value_matrix(
     missing = sorted(set(required).difference(frame.columns))
     if missing:
         raise ResearchError(f"{role} is missing required columns: {missing}")
-    selected = frame.select(required)
-    if selected.select(FEATURE_KEY_COLUMNS).is_duplicated().any():
-        raise ResearchError(f"{role} contains duplicate research keys")
-    if selected.height != len(times) * len(symbols):
-        raise ResearchError(f"{role} does not cover the complete backtest panel")
-    matrix = np.full((len(times), len(symbols)), np.nan, dtype=np.float64)
-    time_index = {int(value): index for index, value in enumerate(times)}
-    symbol_index = {symbol: index for index, symbol in enumerate(symbols)}
     try:
-        for row in selected.iter_rows(named=True):
-            x = time_index[int(row["decision_time_ms"])]
-            y = symbol_index[str(row["symbol"])]
-            matrix[x, y] = float(row[value_column])
-    except (KeyError, TypeError, ValueError) as exc:
+        panel = PanelData.from_frame(frame.select(required), feature_columns=(value_column,))
+    except (KeyError, TypeError, ValueError, pl.exceptions.PolarsError) as exc:
         raise ResearchError(f"{role} keys or values are invalid") from exc
-    if np.any(~np.isfinite(matrix)):
-        raise ResearchError(f"{role} is incomplete or non-finite")
-    return matrix
+    if panel.symbols != symbols or not np.array_equal(panel.times, times):
+        raise ResearchError(f"{role} does not cover the complete backtest panel")
+    panel.require_complete(role=role)
+    return np.asarray(panel.features[value_column], dtype=np.float64)
 
 
 def _fee_schedule_covers(config: ResearchConfig, execution_time_ms: int) -> bool:
@@ -233,6 +219,7 @@ def _run_fold(
     config: ResearchConfig,
     cost_multiplier: float,
     signal_delay_bars: int,
+    panel_data: PanelData | None = None,
 ) -> _FoldBacktestRun:
     train_features = build_feature_view(
         train,
@@ -242,35 +229,57 @@ def _run_fold(
     target: pl.DataFrame | None = None
     if target_column is not None:
         target = build_target_view(train, target_column=target_column)
-    fitted = strategy.fit(
-        TrainingDataset(features=train_features, target=target),
-        context=context,
-    )
-    test_features = build_feature_view(
-        test,
-        required_features=strategy.required_features(),
-    )
-    score_frame = fitted.score(test_features, context=context).frame
-    market_state = build_feature_view(
-        test,
-        required_features=portfolio_policy.required_features(),
-    )
-    target_weight_frame = portfolio_policy.target_weights(
-        score_frame,
-        market_state,
-        context=context,
-    )
-    accounting_fields = (
-        "rolling_beta",
-        "future_return_1h",
-        "future_residual_return_1h",
-        "outcome_funding_rate_1h",
-        "outcome_quote_volume_1h",
-        "market_volatility_regime",
-        "execution_time_ms",
-        "label_end_time_ms",
-    )
-    symbols, times, arrays = _wide_arrays(test, fields=accounting_fields)
+    if panel_data is not None and isinstance(strategy, PanelStrategy):
+        fitted = strategy.fit_panel(panel_data, target=target, context=context)
+    else:
+        fitted = strategy.fit(
+            TrainingDataset(features=train_features, target=target),
+            context=context,
+        )
+    if panel_data is not None and isinstance(fitted, PanelFittedStrategy):
+        strategy_scores = fitted.score_panel(panel_data, context=context)
+    else:
+        test_features = build_feature_view(
+            test,
+            required_features=strategy.required_features(),
+        )
+        strategy_scores = fitted.score(test_features, context=context)
+    score_frame = strategy_scores.frame
+    if panel_data is not None and isinstance(portfolio_policy, PanelPortfolioPolicy):
+        target_weight_frame = portfolio_policy.target_weights_panel(
+            strategy_scores,
+            panel_data,
+            context=context,
+        )
+    else:
+        market_state = build_feature_view(
+            test,
+            required_features=portfolio_policy.required_features(),
+        )
+        target_weight_frame = portfolio_policy.target_weights(
+            score_frame,
+            market_state,
+            context=context,
+        )
+    if panel_data is None:
+        symbols, times, arrays = _wide_arrays(test, fields=ACCOUNTING_FIELDS)
+    else:
+        time_slice = panel_data.time_slice(context.test_start_ms, context.test_end_ms)
+        symbols = panel_data.symbols
+        times = panel_data.times[time_slice]
+        arrays = {
+            field: np.asarray(
+                panel_data.matrix(
+                    field,
+                    start_ms=context.test_start_ms,
+                    end_ms=context.test_end_ms,
+                ),
+                dtype=np.float64,
+            )
+            for field in ACCOUNTING_FIELDS
+        }
+        if test.height != len(times) * len(symbols):
+            raise ResearchError("fold frame and reusable PanelData do not align")
     scores = _long_value_matrix(
         score_frame,
         value_column="score",
@@ -292,8 +301,14 @@ def _run_fold(
     previous = np.zeros(len(symbols), dtype=np.float64)
     equity = 1.0
     output: list[dict[str, object]] = []
-    score_output: list[dict[str, object]] = []
-    position_output: list[dict[str, object]] = []
+    previous_weights = np.empty_like(targets)
+    trade_weights = np.empty_like(targets)
+    score_rank_matrix = np.empty_like(scores)
+    price_contribution_matrix = np.empty_like(targets)
+    funding_contribution_matrix = np.empty_like(targets)
+    fee_matrix = np.empty_like(targets)
+    spread_matrix = np.empty_like(targets)
+    slippage_matrix = np.empty_like(targets)
     fee_rate = float(config.fee_schedule.taker_fee_rate) * cost_multiplier
     half_spread_rate = float(config.spread_bps) / 20_000 * cost_multiplier
     slippage_rate = float(config.slippage_bps) / 10_000 * cost_multiplier
@@ -313,6 +328,13 @@ def _run_fold(
         allocated_fees = trades * fee_rate
         allocated_spread = trades * half_spread_rate
         allocated_slippage = trades * slippage_rate
+        previous_weights[period] = previous
+        trade_weights[period] = trades
+        price_contribution_matrix[period] = price_contributions
+        funding_contribution_matrix[period] = funding_contributions
+        fee_matrix[period] = allocated_fees
+        spread_matrix[period] = allocated_spread
+        slippage_matrix[period] = allocated_slippage
         price_pnl = float(np.dot(weights, arrays["future_return_1h"][period]))
         funding_pnl = float(-np.dot(weights, arrays["outcome_funding_rate_1h"][period]))
         trading_fees = turnover * fee_rate
@@ -332,49 +354,9 @@ def _run_fold(
             where=arrays["outcome_quote_volume_1h"][period] > 0,
         )
         score_ranks = _rank(scores[period])
+        score_rank_matrix[period] = score_ranks
         outcome_ranks = _rank(arrays["future_residual_return_1h"][period])
         rank_ic = float(np.corrcoef(score_ranks, outcome_ranks)[0, 1])
-        for symbol_index, symbol in enumerate(symbols):
-            gross_contribution = float(
-                price_contributions[symbol_index] + funding_contributions[symbol_index]
-            )
-            explicit_cost = float(
-                allocated_fees[symbol_index]
-                + allocated_spread[symbol_index]
-                + allocated_slippage[symbol_index]
-            )
-            score_output.append(
-                {
-                    "fold": context.fold,
-                    "decision_time_ms": int(decision_time),
-                    "symbol": symbol,
-                    "score": float(scores[period, symbol_index]),
-                    "score_rank": float(score_ranks[symbol_index]),
-                }
-            )
-            position_output.append(
-                {
-                    "fold": context.fold,
-                    "decision_time_ms": int(decision_time),
-                    "execution_time_ms": execution_time,
-                    "symbol": symbol,
-                    "previous_weight": float(previous[symbol_index]),
-                    "target_weight": float(weights[symbol_index]),
-                    "trade_weight": float(trades[symbol_index]),
-                    "gross_contribution": gross_contribution,
-                    "net_contribution": gross_contribution - explicit_cost,
-                    "beta_contribution": float(
-                        weights[symbol_index] * arrays["rolling_beta"][period, symbol_index]
-                    ),
-                    "future_return": float(arrays["future_return_1h"][period, symbol_index]),
-                    "funding_rate": float(arrays["outcome_funding_rate_1h"][period, symbol_index]),
-                    "price_pnl": float(price_contributions[symbol_index]),
-                    "funding_pnl": float(funding_contributions[symbol_index]),
-                    "allocated_fee": float(allocated_fees[symbol_index]),
-                    "allocated_spread_cost": float(allocated_spread[symbol_index]),
-                    "allocated_slippage_cost": float(allocated_slippage[symbol_index]),
-                }
-            )
         output.append(
             {
                 "fold": context.fold,
@@ -407,10 +389,47 @@ def _run_fold(
             }
         )
         previous = weights
+    repeated_times = np.repeat(times, len(symbols))
+    tiled_symbols = np.tile(np.asarray(symbols), len(times))
+    repeated_execution_times = np.repeat(
+        np.asarray(arrays["execution_time_ms"][:, 0], dtype=np.int64), len(symbols)
+    )
+    explicit_cost_matrix = fee_matrix + spread_matrix + slippage_matrix
+    gross_contribution_matrix = price_contribution_matrix + funding_contribution_matrix
+    score_output = pl.DataFrame(
+        {
+            "fold": np.full(scores.size, context.fold, dtype=np.int64),
+            "decision_time_ms": repeated_times,
+            "symbol": tiled_symbols,
+            "score": scores.reshape(-1),
+            "score_rank": score_rank_matrix.reshape(-1),
+        }
+    )
+    position_output = pl.DataFrame(
+        {
+            "fold": np.full(targets.size, context.fold, dtype=np.int64),
+            "decision_time_ms": repeated_times,
+            "execution_time_ms": repeated_execution_times,
+            "symbol": tiled_symbols,
+            "previous_weight": previous_weights.reshape(-1),
+            "target_weight": targets.reshape(-1),
+            "trade_weight": trade_weights.reshape(-1),
+            "gross_contribution": gross_contribution_matrix.reshape(-1),
+            "net_contribution": (gross_contribution_matrix - explicit_cost_matrix).reshape(-1),
+            "beta_contribution": (targets * arrays["rolling_beta"]).reshape(-1),
+            "future_return": arrays["future_return_1h"].reshape(-1),
+            "funding_rate": arrays["outcome_funding_rate_1h"].reshape(-1),
+            "price_pnl": price_contribution_matrix.reshape(-1),
+            "funding_pnl": funding_contribution_matrix.reshape(-1),
+            "allocated_fee": fee_matrix.reshape(-1),
+            "allocated_spread_cost": spread_matrix.reshape(-1),
+            "allocated_slippage_cost": slippage_matrix.reshape(-1),
+        }
+    )
     return _FoldBacktestRun(
         curve=pl.DataFrame(output),
-        scores=pl.DataFrame(score_output),
-        positions=pl.DataFrame(position_output),
+        scores=score_output,
+        positions=position_output,
     )
 
 
@@ -466,14 +485,27 @@ def run_walk_forward(
     portfolio_policy: PortfolioPolicy,
     cost_multiplier: float = 1.0,
     signal_delay_bars: int = 0,
+    panel_data: PanelData | None = None,
 ) -> BacktestRun:
     if cost_multiplier < 0:
         raise ResearchError("cost multiplier must be non-negative")
     if signal_delay_bars < 0:
         raise ResearchError("signal delay cannot be negative")
-    decision_times = np.asarray(
-        sorted(frame["decision_time_ms"].unique().to_list()), dtype=np.int64
-    )
+    if panel_data is None:
+        panel_data = PanelData.from_frame(
+            frame,
+            feature_columns=tuple(
+                dict.fromkeys(
+                    (*strategy.required_features(), *portfolio_policy.required_features())
+                )
+            ),
+            outcome_columns=ACCOUNTING_OUTCOME_FIELDS,
+            metadata_columns=ACCOUNTING_METADATA_FIELDS,
+        )
+    panel_data.require_complete(role="walk-forward")
+    if frame.height != panel_data.availability.size:
+        raise ResearchError("walk-forward frame and PanelData have different shapes")
+    decision_times = panel_data.times
     folds = make_walk_forward_folds(
         decision_times,
         train_days=config.walk_forward_train_days,
@@ -510,6 +542,7 @@ def run_walk_forward(
                 config=config,
                 cost_multiplier=cost_multiplier,
                 signal_delay_bars=signal_delay_bars,
+                panel_data=panel_data,
             )
         )
     curve = pl.concat([run.curve for run in fold_runs]).sort("decision_time_ms")
@@ -592,14 +625,37 @@ def run_research_validation(
     strategy: Strategy,
     portfolio_policy: PortfolioPolicy,
     strategy_stress: Mapping[str, Strategy] | None = None,
+    panel_data: PanelData | None = None,
 ) -> BacktestValidationResult:
     """Run the baseline and deterministic validation scenarios without persistence."""
 
+    configured_strategy_stress = strategy_stress or {}
+    if panel_data is None:
+        feature_columns = tuple(
+            dict.fromkeys(
+                (
+                    *strategy.required_features(),
+                    *portfolio_policy.required_features(),
+                    *(
+                        feature
+                        for stress_strategy in configured_strategy_stress.values()
+                        for feature in stress_strategy.required_features()
+                    ),
+                )
+            )
+        )
+        panel_data = PanelData.from_frame(
+            frame,
+            feature_columns=feature_columns,
+            outcome_columns=ACCOUNTING_OUTCOME_FIELDS,
+            metadata_columns=ACCOUNTING_METADATA_FIELDS,
+        )
     baseline = run_walk_forward(
         frame,
         config=config,
         strategy=strategy,
         portfolio_policy=portfolio_policy,
+        panel_data=panel_data,
     )
     cost_15 = run_walk_forward(
         frame,
@@ -607,6 +663,7 @@ def run_research_validation(
         strategy=strategy,
         portfolio_policy=portfolio_policy,
         cost_multiplier=1.5,
+        panel_data=panel_data,
     )
     cost_20 = run_walk_forward(
         frame,
@@ -614,6 +671,7 @@ def run_research_validation(
         strategy=strategy,
         portfolio_policy=portfolio_policy,
         cost_multiplier=2.0,
+        panel_data=panel_data,
     )
     delay = run_walk_forward(
         frame,
@@ -621,6 +679,7 @@ def run_research_validation(
         strategy=strategy,
         portfolio_policy=portfolio_policy,
         signal_delay_bars=1,
+        panel_data=panel_data,
     )
     stress = {
         "cost_1_0x": _metric_summary(baseline.metrics),
@@ -628,7 +687,6 @@ def run_research_validation(
         "cost_2_0x": _metric_summary(cost_20.metrics),
         "signal_delay_1_bar": _metric_summary(delay.metrics),
     }
-    configured_strategy_stress = strategy_stress or {}
     collisions = sorted(set(stress).intersection(configured_strategy_stress))
     if collisions:
         raise ResearchError(f"strategy stress names collide with engine stresses: {collisions}")
@@ -639,6 +697,7 @@ def run_research_validation(
                 config=config,
                 strategy=stress_strategy,
                 portfolio_policy=portfolio_policy,
+                panel_data=panel_data,
             ).metrics
         )
     bootstrap = _block_bootstrap(
@@ -667,13 +726,32 @@ def run_and_persist_backtest(
     strategy_stress: Mapping[str, Strategy],
     generate_chart: bool = False,
 ) -> ResearchBacktestResult:
-    frame = pl.read_parquet(dataset_path)
+    feature_columns = tuple(
+        dict.fromkeys(
+            (
+                *strategy.required_features(),
+                *portfolio_policy.required_features(),
+                *(
+                    feature
+                    for stress_strategy in strategy_stress.values()
+                    for feature in stress_strategy.required_features()
+                ),
+            )
+        )
+    )
+    loaded_dataset = WORKER_DATASET_CACHE.load(
+        dataset_path,
+        feature_columns=feature_columns,
+        outcome_columns=ACCOUNTING_OUTCOME_FIELDS,
+        metadata_columns=ACCOUNTING_METADATA_FIELDS,
+    )
     validation = run_research_validation(
-        frame,
+        loaded_dataset.frame,
         config=config,
         strategy=strategy,
         portfolio_policy=portfolio_policy,
         strategy_stress=strategy_stress,
+        panel_data=loaded_dataset.panel,
     )
     baseline = validation.run
     stress = validation.stress

@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased — Fase 3.5
+## 0.6.0 — 2026-08-28 — Fase 3.5
 
 - Golden snapshot sintético e registro dos checksums do baseline real da Fase 3.
 - Contratos tipados para strategy/fitted strategy, portfolio policy e contexto walk-forward.
@@ -32,6 +32,16 @@
   contagem aproximada de estratégias independentes.
 - DSR com skewness/kurtosis e trial count, PBO/CSCV condicional e lockbox indisponível explícita.
 - Candidate reports e eventos imutáveis de promoção, bloqueio e rejeição; Git dirty não promove.
+- `PanelData` imutável com namespaces de features/outcomes/metadata, availability explícita e
+  suporte estrutural a painéis parciais sem fabricar histórico de universo.
+- `scan_parquet` com projeção de colunas, cache LRU por worker e reutilização do painel nos
+  cenários de validação e trials de campanha.
+- Conversões long/wide, z-scores e materialização long-form vetorizadas; loop stateful do
+  no-trade band preservado intencionalmente.
+- Benchmark não bloqueante de 30 símbolos, dois anos horários, 20 features e 100 trials, com
+  runtime, memória aproximada e tamanho de artifacts.
+- Documentação e aceite final da Fase 3.5 concluídos; Fase 4 e qualquer envio de ordens permanecem
+  fora de escopo.
 
 ## 0.5.0 — 2026-08-28
 
