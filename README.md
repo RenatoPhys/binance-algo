@@ -3,9 +3,11 @@
 Infraestrutura auditável para dados públicos da Binance USDⓈ-M Futures. O data plane atual
 implementa configuração, diagnóstico, REST público, snapshots de `exchangeInfo`, universo seed,
 state store SQLite, histórico idempotente e um recorder WebSocket resiliente com Parquet
-atômico, auditoria DuckDB e replay temporal determinístico. A Fase 3 adiciona funding histórico,
-dataset causal e um baseline vetorizado walk-forward apenas para validação de pesquisa. Não há
-autenticação, simulador de execução, Demo Trading ou envio de ordens.
+atômico, auditoria DuckDB e replay temporal determinístico. A Fase 3 adicionou funding histórico,
+dataset causal e um baseline vetorizado walk-forward. A Fase 3.5 agora evolui essa referência para
+uma plataforma reproduzível de pesquisa: o golden baseline está preservado e estratégia,
+portfólio e engine já usam contratos separados. Não há autenticação, simulador de execução, Demo
+Trading ou envio de ordens.
 
 ## Segurança por padrão
 
@@ -195,6 +197,10 @@ O volume `./var` preserva datasets locais. A imagem fixa as duas flags de segura
 
 ## Próximo marco
 
-A Fase 4 é o simulador orientado a eventos: replay, latência, marketable limit/IOC/post-only,
-fills parciais, fees e funding com invariantes de conta. Demo Trading, alpha promovido e live
-permanecem fora de escopo; `LIVE_TRADING` e envio de ordens continuam impossíveis por configuração.
+A Fase 3.5 é a plataforma de experimentos e pesquisa em escala. Golden regression, contratos e a
+extração de residual momentum/neutral long-short estão concluídos; consulte
+[docs/research_platform.md](docs/research_platform.md). O próximo incremento cria dataset views e
+registries de features/labels. Registry de experimentos, campaigns e ledger ainda precisam ser
+entregues antes de qualquer pesquisa extensa. A Fase 4 não foi iniciada. Demo Trading, alpha
+promovido e live permanecem fora de escopo; `LIVE_TRADING` e envio de ordens continuam impossíveis
+por configuração.

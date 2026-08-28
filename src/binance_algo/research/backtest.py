@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import math
+from collections.abc import Mapping, Sequence
 from dataclasses import asdict, dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -16,6 +17,14 @@ import polars as pl
 from binance_algo.common.errors import ResearchError
 from binance_algo.config import ResearchConfig
 from binance_algo.data.storage import LocalFilesystemStorage
+from binance_algo.research.contracts import (
+    FEATURE_KEY_COLUMNS,
+    FoldContext,
+    TrainingDataset,
+    select_feature_view,
+)
+from binance_algo.research.portfolio.base import PortfolioPolicy
+from binance_algo.research.strategies.base import Strategy
 from binance_algo.research.visualization import render_pnl_svg
 
 HOURS_PER_YEAR = 24 * 365
@@ -119,15 +128,6 @@ def make_walk_forward_folds(
     return tuple(folds)
 
 
-def _cross_sectional_zscore(
-    values: np.ndarray[Any, np.dtype[np.float64]],
-) -> np.ndarray[Any, np.dtype[np.float64]]:
-    standard_deviation = float(np.std(values))
-    if standard_deviation <= 1e-15:
-        return np.zeros_like(values)
-    return (values - float(np.mean(values))) / standard_deviation
-
-
 def _rank(values: np.ndarray[Any, np.dtype[np.float64]]) -> np.ndarray[Any, np.dtype[np.float64]]:
     order = np.argsort(values, kind="stable")
     ranks = np.empty(len(values), dtype=np.float64)
@@ -135,44 +135,10 @@ def _rank(values: np.ndarray[Any, np.dtype[np.float64]]) -> np.ndarray[Any, np.d
     return ranks
 
 
-def _neutral_weights(
-    *,
-    top_index: int,
-    bottom_index: int,
-    betas: np.ndarray[Any, np.dtype[np.float64]],
-    realized_volatility: np.ndarray[Any, np.dtype[np.float64]],
-    config: ResearchConfig,
-) -> np.ndarray[Any, np.dtype[np.float64]]:
-    raw = np.zeros(len(betas), dtype=np.float64)
-    raw[top_index] = 1
-    raw[bottom_index] = -1
-    constraints = np.vstack((np.ones(len(betas), dtype=np.float64), betas))
-    projected = raw - constraints.T @ np.linalg.pinv(constraints @ constraints.T) @ (
-        constraints @ raw
-    )
-    if (
-        float(np.sum(np.abs(projected))) <= 1e-12
-        or projected[top_index] <= 0
-        or projected[bottom_index] >= 0
-    ):
-        projected = raw
-    projected /= float(np.sum(np.abs(projected)))
-    annualized_asset_volatility = realized_volatility * math.sqrt(365)
-    volatility_proxy = float(math.sqrt(np.sum(np.square(projected * annualized_asset_volatility))))
-    target_gross = float(config.gross_exposure)
-    if volatility_proxy > 0:
-        target_gross = min(target_gross, float(config.annual_volatility_target) / volatility_proxy)
-    weights = projected * target_gross
-    maximum_weight = float(np.max(np.abs(weights)))
-    if maximum_weight > float(config.max_symbol_weight):
-        weights *= float(config.max_symbol_weight) / maximum_weight
-    if float(np.sum(np.abs(weights))) > 1 + 1e-12:
-        raise ResearchError("baseline attempted economic leverage")
-    return weights
-
-
 def _wide_arrays(
     frame: pl.DataFrame,
+    *,
+    fields: Sequence[str],
 ) -> tuple[
     tuple[str, ...],
     np.ndarray[Any, np.dtype[np.int64]],
@@ -180,20 +146,11 @@ def _wide_arrays(
 ]:
     symbols = tuple(sorted(str(value) for value in frame["symbol"].unique().to_list()))
     times = np.asarray(sorted(frame["decision_time_ms"].unique().to_list()), dtype=np.int64)
-    fields = (
-        "residual_momentum_1h",
-        "residual_momentum_4h",
-        "residual_momentum_24h",
-        "realized_volatility_24h",
-        "rolling_beta",
-        "future_return_1h",
-        "future_residual_return_1h",
-        "outcome_funding_rate_1h",
-        "outcome_quote_volume_1h",
-        "market_volatility_regime",
-        "execution_time_ms",
-        "label_end_time_ms",
-    )
+    missing = sorted(set(fields).difference(frame.columns))
+    if missing:
+        raise ResearchError(f"backtest input is missing required columns: {missing}")
+    if frame.height != len(times) * len(symbols):
+        raise ResearchError("backtest input panel is incomplete")
     arrays = {
         field: np.full((len(times), len(symbols)), np.nan, dtype=np.float64) for field in fields
     }
@@ -209,44 +166,36 @@ def _wide_arrays(
     return symbols, times, arrays
 
 
-def _scores_and_targets(
-    arrays: dict[str, np.ndarray[Any, np.dtype[np.float64]]],
+def _long_value_matrix(
+    frame: pl.DataFrame,
     *,
-    config: ResearchConfig,
-    momentum_weights: tuple[float, float, float],
-) -> tuple[np.ndarray[Any, np.dtype[np.float64]], np.ndarray[Any, np.dtype[np.float64]]]:
-    periods, symbol_count = arrays["residual_momentum_1h"].shape
-    scores = np.empty((periods, symbol_count), dtype=np.float64)
-    targets = np.empty_like(scores)
-    previous_top: int | None = None
-    previous_bottom: int | None = None
-    band = float(config.no_trade_score_band)
-    for period in range(periods):
-        scores[period] = (
-            momentum_weights[0] * _cross_sectional_zscore(arrays["residual_momentum_1h"][period])
-            + momentum_weights[1] * _cross_sectional_zscore(arrays["residual_momentum_4h"][period])
-            + momentum_weights[2] * _cross_sectional_zscore(arrays["residual_momentum_24h"][period])
-        )
-        top = int(np.argmax(scores[period]))
-        bottom = int(np.argmin(scores[period]))
-        if previous_top is not None and scores[period, top] - scores[period, previous_top] <= band:
-            top = previous_top
-        if (
-            previous_bottom is not None
-            and scores[period, previous_bottom] - scores[period, bottom] <= band
-        ):
-            bottom = previous_bottom
-        if top == bottom:
-            raise ResearchError("cross-sectional score did not produce distinct tails")
-        targets[period] = _neutral_weights(
-            top_index=top,
-            bottom_index=bottom,
-            betas=arrays["rolling_beta"][period],
-            realized_volatility=arrays["realized_volatility_24h"][period],
-            config=config,
-        )
-        previous_top, previous_bottom = top, bottom
-    return scores, targets
+    value_column: str,
+    symbols: tuple[str, ...],
+    times: np.ndarray[Any, np.dtype[np.int64]],
+    role: str,
+) -> np.ndarray[Any, np.dtype[np.float64]]:
+    required = (*FEATURE_KEY_COLUMNS, value_column)
+    missing = sorted(set(required).difference(frame.columns))
+    if missing:
+        raise ResearchError(f"{role} is missing required columns: {missing}")
+    selected = frame.select(required)
+    if selected.select(FEATURE_KEY_COLUMNS).is_duplicated().any():
+        raise ResearchError(f"{role} contains duplicate research keys")
+    if selected.height != len(times) * len(symbols):
+        raise ResearchError(f"{role} does not cover the complete backtest panel")
+    matrix = np.full((len(times), len(symbols)), np.nan, dtype=np.float64)
+    time_index = {int(value): index for index, value in enumerate(times)}
+    symbol_index = {symbol: index for index, symbol in enumerate(symbols)}
+    try:
+        for row in selected.iter_rows(named=True):
+            x = time_index[int(row["decision_time_ms"])]
+            y = symbol_index[str(row["symbol"])]
+            matrix[x, y] = float(row[value_column])
+    except (KeyError, TypeError, ValueError) as exc:
+        raise ResearchError(f"{role} keys or values are invalid") from exc
+    if np.any(~np.isfinite(matrix)):
+        raise ResearchError(f"{role} is incomplete or non-finite")
+    return matrix
 
 
 def _fee_schedule_covers(config: ResearchConfig, execution_time_ms: int) -> bool:
@@ -258,16 +207,69 @@ def _fee_schedule_covers(config: ResearchConfig, execution_time_ms: int) -> bool
 
 
 def _run_fold(
-    frame: pl.DataFrame,
+    train: pl.DataFrame,
+    test: pl.DataFrame,
     *,
-    fold_number: int,
+    context: FoldContext,
+    strategy: Strategy,
+    portfolio_policy: PortfolioPolicy,
     config: ResearchConfig,
     cost_multiplier: float,
     signal_delay_bars: int,
-    momentum_weights: tuple[float, float, float],
 ) -> pl.DataFrame:
-    symbols, times, arrays = _wide_arrays(frame)
-    scores, targets = _scores_and_targets(arrays, config=config, momentum_weights=momentum_weights)
+    train_features = select_feature_view(
+        train,
+        required_features=strategy.required_features(),
+    )
+    target_column = strategy.target_column()
+    target: pl.DataFrame | None = None
+    if target_column is not None:
+        if target_column not in train.columns:
+            raise ResearchError(f"training target column is missing: {target_column}")
+        target = train.select(*FEATURE_KEY_COLUMNS, target_column)
+    fitted = strategy.fit(
+        TrainingDataset(features=train_features, target=target),
+        context=context,
+    )
+    test_features = select_feature_view(
+        test,
+        required_features=strategy.required_features(),
+    )
+    score_frame = fitted.score(test_features, context=context).frame
+    market_state = select_feature_view(
+        test,
+        required_features=portfolio_policy.required_features(),
+    )
+    target_weight_frame = portfolio_policy.target_weights(
+        score_frame,
+        market_state,
+        context=context,
+    )
+    accounting_fields = (
+        "rolling_beta",
+        "future_return_1h",
+        "future_residual_return_1h",
+        "outcome_funding_rate_1h",
+        "outcome_quote_volume_1h",
+        "market_volatility_regime",
+        "execution_time_ms",
+        "label_end_time_ms",
+    )
+    symbols, times, arrays = _wide_arrays(test, fields=accounting_fields)
+    scores = _long_value_matrix(
+        score_frame,
+        value_column="score",
+        symbols=symbols,
+        times=times,
+        role="strategy scores",
+    )
+    targets = _long_value_matrix(
+        target_weight_frame,
+        value_column="target_weight",
+        symbols=symbols,
+        times=times,
+        role="portfolio target weights",
+    )
     if signal_delay_bars:
         delayed = np.zeros_like(targets)
         delayed[signal_delay_bars:] = targets[:-signal_delay_bars]
@@ -311,7 +313,7 @@ def _run_fold(
         rank_ic = float(np.corrcoef(score_ranks, outcome_ranks)[0, 1])
         output.append(
             {
-                "fold": fold_number,
+                "fold": context.fold,
                 "decision_time_ms": int(decision_time),
                 "execution_time_ms": execution_time,
                 "label_end_time_ms": int(arrays["label_end_time_ms"][period, 0]),
@@ -392,9 +394,10 @@ def run_walk_forward(
     frame: pl.DataFrame,
     *,
     config: ResearchConfig,
+    strategy: Strategy,
+    portfolio_policy: PortfolioPolicy,
     cost_multiplier: float = 1.0,
     signal_delay_bars: int = 0,
-    momentum_weights: tuple[float, float, float] | None = None,
 ) -> BacktestRun:
     if cost_multiplier < 0:
         raise ResearchError("cost multiplier must be non-negative")
@@ -409,15 +412,13 @@ def run_walk_forward(
         test_days=config.walk_forward_test_days,
         embargo_bars=config.embargo_bars,
     )
-    weights = momentum_weights or (
-        float(config.momentum_weight_1h),
-        float(config.momentum_weight_4h),
-        float(config.momentum_weight_24h),
-    )
-    if not math.isclose(sum(weights), 1.0, abs_tol=1e-12):
-        raise ResearchError("momentum weights must sum to one")
     curves: list[pl.DataFrame] = []
     for fold in folds:
+        train = frame.filter(
+            pl.col("decision_time_ms").is_between(
+                fold.train_start_ms, fold.train_end_ms, closed="both"
+            )
+        )
         test = frame.filter(
             pl.col("decision_time_ms").is_between(
                 fold.test_start_ms, fold.test_end_ms, closed="both"
@@ -425,12 +426,22 @@ def run_walk_forward(
         )
         curves.append(
             _run_fold(
+                train,
                 test,
-                fold_number=fold.fold,
+                context=FoldContext(
+                    fold=fold.fold,
+                    train_start_ms=fold.train_start_ms,
+                    train_end_ms=fold.train_end_ms,
+                    test_start_ms=fold.test_start_ms,
+                    test_end_ms=fold.test_end_ms,
+                    embargo_bars=fold.embargo_bars,
+                    random_seed=config.random_seed,
+                ),
+                strategy=strategy,
+                portfolio_policy=portfolio_policy,
                 config=config,
                 cost_multiplier=cost_multiplier,
                 signal_delay_bars=signal_delay_bars,
-                momentum_weights=weights,
             )
         )
     curve = pl.concat(curves).sort("decision_time_ms")
@@ -505,23 +516,58 @@ def run_and_persist_backtest(
     reports_root: Path,
     compression: str,
     config: ResearchConfig,
+    strategy: Strategy,
+    portfolio_policy: PortfolioPolicy,
+    strategy_stress: Mapping[str, Strategy],
     generate_chart: bool = False,
 ) -> ResearchBacktestResult:
     frame = pl.read_parquet(dataset_path)
-    baseline = run_walk_forward(frame, config=config)
-    cost_15 = run_walk_forward(frame, config=config, cost_multiplier=1.5)
-    cost_20 = run_walk_forward(frame, config=config, cost_multiplier=2.0)
-    delay = run_walk_forward(frame, config=config, signal_delay_bars=1)
-    fast = run_walk_forward(frame, config=config, momentum_weights=(0.30, 0.40, 0.30))
-    slow = run_walk_forward(frame, config=config, momentum_weights=(0.10, 0.30, 0.60))
+    baseline = run_walk_forward(
+        frame,
+        config=config,
+        strategy=strategy,
+        portfolio_policy=portfolio_policy,
+    )
+    cost_15 = run_walk_forward(
+        frame,
+        config=config,
+        strategy=strategy,
+        portfolio_policy=portfolio_policy,
+        cost_multiplier=1.5,
+    )
+    cost_20 = run_walk_forward(
+        frame,
+        config=config,
+        strategy=strategy,
+        portfolio_policy=portfolio_policy,
+        cost_multiplier=2.0,
+    )
+    delay = run_walk_forward(
+        frame,
+        config=config,
+        strategy=strategy,
+        portfolio_policy=portfolio_policy,
+        signal_delay_bars=1,
+    )
     stress = {
         "cost_1_0x": _metric_summary(baseline.metrics),
         "cost_1_5x": _metric_summary(cost_15.metrics),
         "cost_2_0x": _metric_summary(cost_20.metrics),
         "signal_delay_1_bar": _metric_summary(delay.metrics),
-        "momentum_fast": _metric_summary(fast.metrics),
-        "momentum_slow": _metric_summary(slow.metrics),
     }
+    reserved_stress_names = set(stress)
+    collisions = sorted(reserved_stress_names.intersection(strategy_stress))
+    if collisions:
+        raise ResearchError(f"strategy stress names collide with engine stresses: {collisions}")
+    for name, stress_strategy in strategy_stress.items():
+        stress[name] = _metric_summary(
+            run_walk_forward(
+                frame,
+                config=config,
+                strategy=stress_strategy,
+                portfolio_policy=portfolio_policy,
+            ).metrics
+        )
     bootstrap = _block_bootstrap(
         np.asarray(baseline.curve["net_return"].to_numpy(), dtype=np.float64),
         samples=config.block_bootstrap_samples,
