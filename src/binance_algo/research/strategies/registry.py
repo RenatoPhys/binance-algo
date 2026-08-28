@@ -9,6 +9,10 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from binance_algo.common.errors import ResearchError
 from binance_algo.research.strategies.base import Strategy
+from binance_algo.research.strategies.donchian_breakout import (
+    DonchianBreakoutParameters,
+    DonchianBreakoutStrategy,
+)
 from binance_algo.research.strategies.funding_carry import (
     FundingCarryParameters,
     FundingCarryStrategy,
@@ -42,6 +46,13 @@ class ResidualMomentumSpec(BaseModel):
     momentum_weight_1h: float = Field(ge=0, le=1)
     momentum_weight_4h: float = Field(ge=0, le=1)
     momentum_weight_24h: float = Field(ge=0, le=1)
+
+
+class DonchianBreakoutSpec(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    entry_window_hours: int = Field(ge=24, le=24 * 90)
+    exit_window_hours: int = Field(ge=4, le=24 * 30)
 
 
 class FundingCarrySpec(BaseModel):
@@ -78,6 +89,16 @@ class VolatilityFilteredSmaSpec(SmaCrossoverSpec):
 
 
 StrategyFactory = Callable[[Mapping[str, Any]], Strategy]
+
+
+def build_donchian_breakout(parameters: Mapping[str, Any]) -> DonchianBreakoutStrategy:
+    try:
+        parsed = DonchianBreakoutSpec.model_validate(dict(parameters))
+        return DonchianBreakoutStrategy(
+            parameters=DonchianBreakoutParameters(**parsed.model_dump())
+        )
+    except (TypeError, ValueError, ResearchError) as exc:
+        raise ResearchError(f"invalid donchian_breakout parameters: {exc}") from exc
 
 
 def build_residual_momentum(parameters: Mapping[str, Any]) -> ResidualMomentumStrategy:
@@ -149,6 +170,8 @@ def build_volatility_filtered_sma(parameters: Mapping[str, Any]) -> VolatilityFi
 
 
 STRATEGY_FACTORIES: dict[tuple[str, str], StrategyFactory] = {
+    ("donchian_breakout", "1"): build_donchian_breakout,
+    ("donchian_breakout", "v1"): build_donchian_breakout,
     ("funding_carry", "1"): build_funding_carry,
     ("funding_carry", "v1"): build_funding_carry,
     ("linear_cross_sectional", "1"): build_linear_cross_sectional,
@@ -180,6 +203,7 @@ def build_strategy(
 
 __all__ = [
     "STRATEGY_FACTORIES",
+    "DonchianBreakoutSpec",
     "FundingCarrySpec",
     "LinearCrossSectionalSpec",
     "ResidualMeanReversionSpec",
@@ -187,6 +211,7 @@ __all__ = [
     "SmaCrossoverSpec",
     "StrategyFactory",
     "VolatilityFilteredSmaSpec",
+    "build_donchian_breakout",
     "build_funding_carry",
     "build_linear_cross_sectional",
     "build_residual_mean_reversion",

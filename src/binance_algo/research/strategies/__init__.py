@@ -1,6 +1,11 @@
 """Typed strategy contracts and implementations for offline research."""
 
 from binance_algo.research.strategies.base import FittedStrategy, Strategy
+from binance_algo.research.strategies.donchian_breakout import (
+    DONCHIAN_BREAKOUT_FEATURES,
+    DonchianBreakoutParameters,
+    DonchianBreakoutStrategy,
+)
 from binance_algo.research.strategies.funding_carry import (
     FundingCarryParameters,
     FundingCarryStrategy,
@@ -28,8 +33,11 @@ from binance_algo.research.strategies.sma_crossover import (
 )
 
 __all__ = [
+    "DONCHIAN_BREAKOUT_FEATURES",
     "LINEAR_CROSS_SECTIONAL_FEATURES",
     "SMA_CROSSOVER_FEATURES",
+    "DonchianBreakoutParameters",
+    "DonchianBreakoutStrategy",
     "FittedLinearCrossSectionalStrategy",
     "FittedSmaCrossoverStrategy",
     "FittedStrategy",
