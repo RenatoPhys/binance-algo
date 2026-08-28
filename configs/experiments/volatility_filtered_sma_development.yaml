@@ -1,9 +1,10 @@
 campaign:
-  name: volatility_filtered_sma_v1_development_v2
+  name: volatility_filtered_sma_v1_development_v3
   description: >-
     Development-only screen ending before the final two-year OOS. A raw 12-hour versus 168-hour
     SMA trend is active only below a volatility threshold fitted from each fold's training features.
-    This v2 preserves the preregistered grid after correcting analytical namespace projection.
+    This v3 preserves the preregistered grid after correcting analytical namespace projection in
+    both the shared engine and the campaign runner.
   hypothesis_id: HYP-VOL-FILTERED-SMA-0001
   artifact_policy: summary
   max_trials: 3
