@@ -133,15 +133,40 @@ def sha256_file(path: Path, *, chunk_bytes: int = 1_048_576) -> str:
     return digest.hexdigest()
 
 
+def kline_csv_has_header(path: Path) -> bool:
+    """Detect the two official Binance archive layouts without weakening validation."""
+
+    try:
+        with path.open("r", encoding="utf-8", newline="") as stream:
+            first_row = next(csv.reader(stream), None)
+    except (OSError, UnicodeError) as exc:
+        raise ArchiveError(f"cannot inspect kline CSV {path}: {exc}") from exc
+    if first_row is None:
+        raise ArchiveError(f"kline CSV has no data rows: {path}")
+    if tuple(first_row) == KLINE_HEADER:
+        return True
+    if len(first_row) != len(KLINE_HEADER):
+        raise ArchiveError(
+            f"kline CSV first row has {len(first_row)} columns, expected {len(KLINE_HEADER)}"
+        )
+    try:
+        int(first_row[0])
+        int(first_row[6])
+        int(first_row[8])
+    except ValueError as exc:
+        raise ArchiveError(f"unexpected kline CSV header in {path}") from exc
+    return False
+
+
 def validate_kline_csv(path: Path) -> int:
+    has_header = kline_csv_has_header(path)
     try:
         with path.open("r", encoding="utf-8", newline="") as stream:
             reader = csv.reader(stream)
-            header = next(reader, None)
-            if tuple(header or ()) != KLINE_HEADER:
-                raise ArchiveError(f"unexpected kline CSV header in {path}")
+            if has_header:
+                next(reader)
             row_count = 0
-            for line_number, row in enumerate(reader, start=2):
+            for line_number, row in enumerate(reader, start=2 if has_header else 1):
                 if len(row) != len(KLINE_HEADER):
                     raise ArchiveError(
                         f"kline CSV row {line_number} has {len(row)} columns, expected 12"

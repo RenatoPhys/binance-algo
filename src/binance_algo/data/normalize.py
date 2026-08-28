@@ -15,6 +15,7 @@ import polars as pl
 from binance_algo.common.errors import BinanceAlgoError, DataContractError, StorageError
 from binance_algo.data.archive_client import (
     KLINE_HEADER,
+    kline_csv_has_header,
     sha256_file,
     validate_and_extract_kline_archive,
 )
@@ -112,11 +113,20 @@ def normalize_kline_csv(
     """Return canonical rows and source quality counters before deterministic deduplication."""
 
     try:
-        raw = pl.read_csv(
-            csv_path,
-            has_header=True,
-            schema_overrides={column: pl.String for column in KLINE_HEADER},
-        )
+        has_header = kline_csv_has_header(csv_path)
+        if has_header:
+            raw = pl.read_csv(
+                csv_path,
+                has_header=True,
+                schema_overrides={column: pl.String for column in KLINE_HEADER},
+            )
+        else:
+            raw = pl.read_csv(
+                csv_path,
+                has_header=False,
+                new_columns=list(KLINE_HEADER),
+                schema_overrides={column: pl.String for column in KLINE_HEADER},
+            )
     except (OSError, pl.exceptions.PolarsError) as exc:
         raise DataContractError(f"cannot parse kline CSV {csv_path}: {exc}") from exc
     if tuple(raw.columns) != KLINE_HEADER:

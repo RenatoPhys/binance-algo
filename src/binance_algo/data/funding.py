@@ -65,6 +65,14 @@ class FundingCatalogResult:
     max_funding_time_ms: int | None
 
 
+def _optional_mark_price(value: str | None) -> float | None:
+    """Treat the empty markPrice used by legacy Binance funding rows as unavailable."""
+
+    if value is None or not value.strip():
+        return None
+    return float(value)
+
+
 async def _fetch_all(
     source: FundingHistorySource,
     *,
@@ -112,7 +120,7 @@ def _canonicalize_events(
             )
         try:
             rate = float(event.funding_rate)
-            mark = float(event.mark_price) if event.mark_price is not None else None
+            mark = _optional_mark_price(event.mark_price)
         except ValueError as exc:
             raise DataQualityError("funding rate or mark price is not numeric") from exc
         if not math.isfinite(rate) or abs(rate) > 1:
@@ -195,10 +203,7 @@ async def sync_funding_history(
                     "funding_rate": [float(event.funding_rate) for event in events],
                     "funding_time_ms": [event.funding_time_ms for event in events],
                     "mark_price_str": [event.mark_price for event in events],
-                    "mark_price": [
-                        float(event.mark_price) if event.mark_price is not None else None
-                        for event in events
-                    ],
+                    "mark_price": [_optional_mark_price(event.mark_price) for event in events],
                     "rate_type": [event.rate_type for event in events],
                     "ingested_at_ns": [ingested_at_ns] * len(events),
                     "source": ["binance_public_rest"] * len(events),
