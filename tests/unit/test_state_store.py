@@ -125,3 +125,40 @@ def test_backfill_job_state_machine(tmp_path: Path) -> None:
 
     with pytest.raises(InvalidStateTransition, match="COMPLETED -> FAILED"):
         store.transition_backfill_job("job-1", BackfillJobStatus.FAILED)
+
+
+def test_stream_checkpoint_upsert_is_durable(tmp_path: Path) -> None:
+    store = StateStore(tmp_path / "ingestion.sqlite3")
+    store.initialize()
+
+    store.upsert_stream_checkpoint("book_ticker:BTCUSDT", '{"event_id":"first"}')
+    store.upsert_stream_checkpoint("book_ticker:BTCUSDT", '{"event_id":"second"}')
+    store.upsert_stream_checkpoint("mark_price:BTCUSDT", '{"event_id":"third"}')
+
+    reopened = StateStore(store.path)
+    reopened.initialize()
+    assert reopened.get_stream_checkpoint("book_ticker:BTCUSDT") == '{"event_id":"second"}'
+    assert reopened.list_stream_checkpoints() == {
+        "book_ticker:BTCUSDT": '{"event_id":"second"}',
+        "mark_price:BTCUSDT": '{"event_id":"third"}',
+    }
+
+
+def test_stream_file_validation_and_checkpoint_commit_together(tmp_path: Path) -> None:
+    store = StateStore(tmp_path / "ingestion.sqlite3")
+    store.initialize()
+    store.register_data_file(data_file_record(tmp_path / "events.parquet"))
+    store.transition_data_file("file-1", DataFileStatus.DOWNLOADED)
+
+    validated = store.validate_stream_file_with_checkpoint(
+        "file-1",
+        checksum="b" * 64,
+        row_count=12,
+        stream_key="book_ticker:BTCUSDT",
+        checkpoint_json='{"event_id":"durable"}',
+    )
+
+    assert validated.status is DataFileStatus.VALIDATED
+    assert validated.row_count == 12
+    assert validated.checksum == "b" * 64
+    assert store.get_stream_checkpoint("book_ticker:BTCUSDT") == '{"event_id":"durable"}'

@@ -6,9 +6,11 @@ from typing import Any
 
 import pytest
 from aiohttp import web
+from prometheus_client import generate_latest
 
 from binance_algo.exchange.binance_usdm.errors import BinanceAPIError, BinanceResponseError
 from binance_algo.exchange.binance_usdm.rest import BinanceUSDMRestClient
+from binance_algo.observability.metrics import RecorderMetrics
 
 
 @asynccontextmanager
@@ -38,14 +40,19 @@ async def test_public_endpoints_and_rate_limit_headers() -> None:
             return web.json_response({"serverTime": 1_787_873_855_926, "symbols": []})
         raise web.HTTPNotFound()
 
+    metrics = RecorderMetrics(queue_capacity=1)
     async with (
         fake_binance(handler) as base_url,
-        BinanceUSDMRestClient(base_url=base_url) as client,
+        BinanceUSDMRestClient(base_url=base_url, metrics=metrics) as client,
     ):
         await client.ping()
         assert client.last_rate_limits == {"x-mbx-used-weight-1m": "1"}
         assert await client.server_time() == 1_787_873_855_926
         assert (await client.exchange_info())["symbols"] == []
+
+    samples = generate_latest(metrics.registry).decode("utf-8")
+    assert 'binance_rest_requests_total{path="/fapi/v1/ping",status="200"} 1.0' in samples
+    assert 'binance_rate_limit_used{header="x-mbx-used-weight-1m"} 1.0' in samples
 
 
 async def test_retries_safe_get_on_server_error() -> None:

@@ -4,12 +4,14 @@ from __future__ import annotations
 
 import asyncio
 import random
+import time
 from collections.abc import Awaitable, Callable, Mapping
-from typing import Any
+from typing import Any, Protocol
 
 import aiohttp
 import orjson
 
+from binance_algo import __version__
 from binance_algo.exchange.binance_usdm import endpoints
 from binance_algo.exchange.binance_usdm.errors import (
     BinanceAPIError,
@@ -19,6 +21,19 @@ from binance_algo.exchange.binance_usdm.errors import (
 
 Sleep = Callable[[float], Awaitable[None]]
 Jitter = Callable[[float], float]
+
+
+class RestMetrics(Protocol):
+    def observe_rest_response(
+        self,
+        *,
+        path: str,
+        status: int,
+        latency_seconds: float,
+        rate_limits: dict[str, str],
+    ) -> None: ...
+
+    def observe_rest_error(self, *, path: str, error_type: str, latency_seconds: float) -> None: ...
 
 
 class BinanceUSDMRestClient:
@@ -34,6 +49,7 @@ class BinanceUSDMRestClient:
         session: aiohttp.ClientSession | None = None,
         sleep: Sleep = asyncio.sleep,
         jitter: Jitter | None = None,
+        metrics: RestMetrics | None = None,
     ) -> None:
         self._base_url = base_url.rstrip("/")
         self._timeout = aiohttp.ClientTimeout(total=timeout_seconds)
@@ -44,6 +60,7 @@ class BinanceUSDMRestClient:
         self._sleep = sleep
         self._jitter: Jitter = jitter or (lambda ceiling: random.uniform(0.0, ceiling))
         self._last_rate_limits: dict[str, str] = {}
+        self._metrics = metrics
 
     @property
     def last_rate_limits(self) -> Mapping[str, str]:
@@ -52,7 +69,7 @@ class BinanceUSDMRestClient:
     async def __aenter__(self) -> BinanceUSDMRestClient:
         if self._session is None:
             self._session = aiohttp.ClientSession(
-                headers={"User-Agent": "binance-algo/0.1 public-data"}
+                headers={"User-Agent": f"binance-algo/{__version__} public-data"}
             )
         return self
 
@@ -91,12 +108,21 @@ class BinanceUSDMRestClient:
 
         last_network_error: BaseException | None = None
         for attempt in range(1, self._max_attempts + 1):
+            attempt_started_ns = time.monotonic_ns()
             try:
                 async with self._session.get(
                     f"{self._base_url}{path}", timeout=self._timeout
                 ) as response:
                     self._capture_rate_limits(response.headers)
                     body = await response.read()
+                    if self._metrics is not None:
+                        self._metrics.observe_rest_response(
+                            path=path,
+                            status=response.status,
+                            latency_seconds=(time.monotonic_ns() - attempt_started_ns)
+                            / 1_000_000_000,
+                            rate_limits=self._last_rate_limits,
+                        )
                     payload = self._decode_payload(body, path)
                     if (
                         response.status == 429 or 500 <= response.status < 600
@@ -114,6 +140,12 @@ class BinanceUSDMRestClient:
                         )
                     return payload
             except (aiohttp.ClientError, TimeoutError) as exc:
+                if self._metrics is not None:
+                    self._metrics.observe_rest_error(
+                        path=path,
+                        error_type=type(exc).__name__,
+                        latency_seconds=(time.monotonic_ns() - attempt_started_ns) / 1_000_000_000,
+                    )
                 last_network_error = exc
                 if attempt < self._max_attempts:
                     await self._sleep(self._retry_delay(attempt, {}))

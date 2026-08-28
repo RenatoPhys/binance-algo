@@ -50,3 +50,29 @@ partir da lista explícita de arquivos `NORMALIZED`, não de uma varredura cega 
 
 Research plane e trading plane ainda não existem. A separação física será ampliada quando
 houver entregáveis reais; não foram criadas árvores de arquivos vazios.
+
+O data plane em tempo real é independente do histórico:
+
+```text
+Binance /public (bookTicker) ----+
+                                 +-> parser estrito -> asyncio.Queue limitada
+Binance /market (3 streams) -----+                         |
+                                                           v
+                                             buffers por stream/hora/símbolo
+                                                           |
+                                  SQLite checkpoint <- Parquet atômico + manifesto
+                                                           |
+                                                           v
+                           DuckDB views explícitas -> quality report -> replay offline
+```
+
+Cada rota tem `connection_id`, detecção de staleness, rotação preventiva, reconnect com backoff
+exponencial e jitter e resubscribe determinístico. Uma fila cheia é uma falha observável, nunca
+uma permissão para perder dados. O shutdown primeiro encerra os produtores, depois drena a fila e
+só então fecha writer e health server.
+
+O `event_id` é SHA-256 do nome do stream e do payload JSON canônico; timestamps locais, conexão e
+run não entram no hash. Isso torna duplicatas de transporte detectáveis sem apagar a proveniência.
+O replay faz `UNION ALL BY NAME` apenas dos paths `VALIDATED` selecionados no SQLite e ordena por
+`event_time_ms`, `received_time_ns`, `event_id` e tipo. O clock é uma interface injetável e o
+motor não importa nem chama nenhum cliente de rede.

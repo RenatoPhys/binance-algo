@@ -35,3 +35,19 @@ class ArchiveError(BinanceAlgoError):
 
 class DataQualityError(BinanceAlgoError):
     """Normalized market data violates its canonical contract or quality gate."""
+
+
+class WebSocketStreamError(BinanceAlgoError):
+    """A public market stream connection or payload failed its contract."""
+
+
+class RecorderError(BinanceAlgoError):
+    """The real-time recorder could not preserve its lossless guarantees."""
+
+
+class QueueSaturatedError(RecorderError):
+    """The bounded recorder queue saturated and ingestion must stop explicitly."""
+
+
+class ReplayError(BinanceAlgoError):
+    """Recorded events cannot be replayed deterministically."""

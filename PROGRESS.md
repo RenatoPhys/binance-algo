@@ -2,7 +2,8 @@
 
 ## Current milestone
 
-Fase 2 — recorder WebSocket e replay determinístico de market data.
+Fase 3 — dataset point-in-time e protocolo de backtest básico (planejamento; nenhum alpha
+implementado ainda).
 
 ## Completed
 
@@ -25,10 +26,22 @@ Fase 2 — recorder WebSocket e replay determinístico de market data.
 - [x] Catálogo DuckDB persistente com view `klines`
 - [x] Backfill de 90 dias para BTCUSDT, ETHUSDT e SOLUSDT
 - [x] Gate histórico da Fase 1 aprovado e rerun integral idempotente
+- [x] WebSocket resiliente nas rotas oficiais `public` e `market`
+- [x] `bookTicker`, `aggTrade`, `markPrice@1s`/funding e `kline_1m` para 3 símbolos
+- [x] Fila assíncrona limitada, staleness, backoff com jitter e rotação preventiva
+- [x] Parquet raw atômico por micro-batch, manifesto e checkpoint transacional
+- [x] Recovery de arquivos em voo/órfãos e quarentena de temporários/inválidos
+- [x] Métricas Prometheus e health checks live/ready
+- [x] Catálogo DuckDB e gate de qualidade do recorder
+- [x] Replay temporal 1×/acelerado, clock injetável e determinismo por digest
+- [x] Gate real de 60 minutos da Fase 2 aprovado
 
 ## Pending
 
-- [ ] Recorder WebSocket e replay
+- [ ] Especificar dataset point-in-time da Fase 3 sem leakage
+- [ ] Definir features/labels baseline antes de implementar estratégia
+- [ ] Incorporar funding e custos configuráveis ao protocolo de pesquisa
+- [ ] Implementar walk-forward e relatório de performance/estabilidade
 
 ## Blockers
 
@@ -39,11 +52,12 @@ Fase 2 — recorder WebSocket e replay determinístico de market data.
 ## Validation
 
 - `uv sync`: passed; lockfile com 59 packages
-- `ruff format --check .`: passed
+- `uv sync --frozen`: passed; `binance-algo==0.4.0`, lockfile com 59 packages
+- `ruff format --check .`: passed; 63 files
 - `ruff check .`: passed
-- `mypy src`: passed; 25 source files
-- `pytest -m "not network"`: 33 passed, 2 deselected
-- `pytest -m network`: 2 passed, 33 deselected
+- `mypy src`: passed; 33 source files
+- `pytest -m "not network"`: 51 passed, 2 deselected
+- `pytest -m network`: 2 passed, 51 deselected
 - `binance-algo doctor`: todos os checks passaram; SQLite `journal_mode=wal`
 - `exchange-info snapshot`: 733 instrumentos persistidos
 - DuckDB: 733 linhas, 733 símbolos distintos, zero filtros tick/step ausentes
@@ -57,6 +71,18 @@ Fase 2 — recorder WebSocket e replay determinístico de market data.
 - DuckDB: view `klines` com 388.800 linhas
 - rerun integral: 270 archives e 270 Parquets `skipped`, zero bytes baixados e row count estável
 - checksum contract BTCUSDT: `1651da32387a1342bdba15b28504dc4d55caee905a58fec04f52c280b1d69f7f`
+- recorder real 60m (Demo): run `b44ed33456b147179435f7cd34733e4e`, 3.601,663s,
+  99.847 mensagens/linhas, 1.440 arquivos, 22.038.204 bytes, queue peak 130/100.000,
+  zero drops, duplicatas, gaps, regressões ou valores inválidos
+- streams 60m: book ticker 54.605, aggregate trades 21.922, mark price 10.798 e kline
+  12.522; checksums e schemas passaram em todos os 1.440 Parquets
+- latência p95 observada: book 519,466ms, trades 512,946ms, mark 585,191ms e kline
+  517,422ms; staleness máxima por símbolo reportada entre 2,626s e 27,854s
+- replay 1×/100×: 99.847 eventos, digest idêntico
+  `42920f3830e70d5d0541eec179be514cd5219b201da355c93568813178d1e647`, clocks
+  virtuais 3.599,727s e 35,997s
+- reconnect forçado em servidor fake: passed, zero loss; cancelamento gracioso, recovery e
+  quarentena também cobertos por testes
 
 ## Risks and mitigations
 
@@ -68,6 +94,10 @@ Fase 2 — recorder WebSocket e replay determinístico de market data.
 - A Binance pode substituir archives históricos. O rerun normal preserva idempotência e não
   consulta o checksum remoto; detecção periódica de replacements ainda precisa de uma política
   versionada para não sobrescrever raw silenciosamente.
+- A execução de 60 minutos não sofreu disconnect espontâneo; reconnect, resubscribe e continuidade
+  foram provados deterministicamente com servidor fake.
+- A granularidade de 30 segundos produziu 1.440 arquivos na hora. Compactação é o primeiro cuidado
+  operacional antes de ampliar duração/universo.
 
 ## Known limitations
 
@@ -77,4 +107,6 @@ Fase 2 — recorder WebSocket e replay determinístico de market data.
   incrementos posteriores
 - O histórico validado cobre 90 dias; ranges maiores e arquivos monthly ainda não foram testados
 - A comparação cruzada com uma segunda fonte permanece `NOT_RUN`
-- Sem WebSocket, replay, backtest, estratégia, autenticação ou envio de ordens
+- Um único recorder deve operar por raiz de storage/state DB; não há coordenação distribuída
+- `bookTicker` não é depth nem sustenta um order book local
+- Sem compactação, backtest, estratégia, autenticação ou envio de ordens

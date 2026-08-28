@@ -19,6 +19,9 @@ def test_default_configuration_is_public_data_only(monkeypatch: pytest.MonkeyPat
 
     assert settings.binance.authenticated_environment == "demo"
     assert settings.binance.rest_base_url == "https://demo-fapi.binance.com"
+    assert settings.binance.market_ws_base_url == "wss://demo-fstream.binance.com"
+    assert settings.recorder.queue_capacity == 100_000
+    assert settings.streams.depth is False
     assert settings.safety.live_trading is False
     assert settings.safety.allow_order_submission is False
     assert settings.safety.max_order_notional_usdt == 0
@@ -53,4 +56,26 @@ def test_universe_symbols_cannot_repeat(tmp_path: Path) -> None:
     (config_dir / "base.yaml").write_text(base, encoding="utf-8")
 
     with pytest.raises(ConfigurationError, match="must not contain duplicates"):
+        load_settings(config_dir / "base.yaml")
+
+
+def test_websocket_endpoint_requires_tls(tmp_path: Path) -> None:
+    config_dir = tmp_path / "configs"
+    config_dir.mkdir()
+    base = BASE_CONFIG.read_text(encoding="utf-8").replace(
+        "wss://demo-fstream.binance.com", "ws://demo-fstream.binance.com"
+    )
+    (config_dir / "base.yaml").write_text(base, encoding="utf-8")
+
+    with pytest.raises(ConfigurationError, match="market_ws_base_url must use WSS"):
+        load_settings(config_dir / "base.yaml")
+
+
+def test_depth_cannot_be_enabled_in_basic_recorder(tmp_path: Path) -> None:
+    config_dir = tmp_path / "configs"
+    config_dir.mkdir()
+    base = BASE_CONFIG.read_text(encoding="utf-8").replace("  depth: false", "  depth: true")
+    (config_dir / "base.yaml").write_text(base, encoding="utf-8")
+
+    with pytest.raises(ConfigurationError, match="depth remains disabled"):
         load_settings(config_dir / "base.yaml")

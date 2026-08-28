@@ -2,8 +2,9 @@
 
 Infraestrutura auditável para dados públicos da Binance USDⓈ-M Futures. O data plane atual
 implementa configuração, diagnóstico, REST público, snapshots de `exchangeInfo`, universo seed,
-state store SQLite, backfill idempotente, Parquet canônico, auditoria e catálogo DuckDB para
-klines 1m. Não há estratégia, WebSocket, autenticação, backtest ou envio de ordens.
+state store SQLite, histórico idempotente e um recorder WebSocket resiliente com Parquet
+atômico, auditoria DuckDB e replay temporal determinístico. Não há estratégia, autenticação,
+backtest ou envio de ordens.
 
 ## Segurança por padrão
 
@@ -21,6 +22,7 @@ para uma fase futura, copie `.env.example` para `.env`; o arquivo local é ignor
 - Python 3.12 ou superior (o `uv` pode selecionar/baixar um runtime compatível)
 - [`uv`](https://docs.astral.sh/uv/)
 - Rede liberada para `https://demo-fapi.binance.com` e `https://data.binance.vision`
+- Rede liberada para `wss://demo-fstream.binance.com` durante gravações em tempo real
 
 Docker e GNU Make são opcionais. Todos os comandos do Makefile têm um equivalente `uv` abaixo.
 
@@ -53,7 +55,27 @@ uv run binance-algo data normalize --dataset klines \
 uv run binance-algo data audit --dataset klines \
   --symbols BTCUSDT,ETHUSDT,SOLUSDT --interval 1m \
   --start 2026-05-28 --end 2026-08-25
+uv run binance-algo recorder start --duration-seconds 3600 --metrics-port 9108
+uv run binance-algo recorder status
 ```
+
+Durante o recorder, consulte `http://127.0.0.1:9108/health/live`, `/health/ready` e `/metrics`.
+Use porta `0` para selecionar uma porta efêmera em testes. A Binance separa `bookTicker` na rota
+`public` e `aggTrade`, `markPrice` e `kline_1m` na rota `market`; o adapter constrói essas
+assinaturas de forma determinística.
+
+Para replay offline, use o range UTC ou epoch-ms mostrado no relatório:
+
+```bash
+uv run binance-algo replay --dataset all \
+  --start 2026-08-28T02:00:00Z --end 2026-08-28T03:00:00Z --speed 1
+uv run binance-algo replay --dataset all \
+  --start 2026-08-28T02:00:00Z --end 2026-08-28T03:00:00Z --speed 100
+```
+
+O clock virtual é o default: ele respeita os deltas temporais sem esperar tempo de parede. Passe
+`--wall-clock` somente quando um consumidor realmente precisar aguardar entre eventos. Cada
+execução verifica duas leituras completas e falha se contagem ou digest divergir.
 
 Para um cutoff explícito:
 
@@ -74,11 +96,14 @@ var/data/raw_archives/binance/usdm/klines/<symbol>/1m/*.zip
 var/data/raw_archives/binance/usdm/klines/<symbol>/1m/*.CHECKSUM
 var/data/raw_archives/binance/usdm/klines/<symbol>/1m/extracted/*.csv
 var/data/bronze/binance/usdm/klines/date=YYYY-MM-DD/symbol=<symbol>/*.parquet
+var/data/raw/binance/usdm/<stream>/date=YYYY-MM-DD/hour=HH/symbol=<symbol>/*.parquet
+var/data/quarantine/recorder_recovery/<timestamp>/*
 var/state/ingestion.sqlite3
 var/state/market_data.duckdb
 var/reports/downloads_*.{json,md}
 var/reports/normalization_*.{json,md}
 var/reports/data_quality_*.{json,md}
+var/reports/recorder_*.{json,md}
 ```
 
 Raw e bronze são imutáveis. A escrita passa por arquivo temporário, `fsync`, leitura de validação
@@ -94,6 +119,19 @@ seguinte, o CLI rejeita datas dentro da janela de publicação configurada.
 desordem, duplicatas, gaps, timestamps desalinhados, preços/quantidades negativos, candle aberto
 ou OHLC inválido. A view persistente `klines` do DuckDB aponta somente para arquivos
 `NORMALIZED` presentes no manifesto.
+
+O recorder usa filas limitadas e nunca descarta silenciosamente. Saturação encerra a captura com
+erro e incrementa `recorder_dropped_events_total`; o valor aceito é zero. Flush ocorre por linhas,
+tempo ou shutdown e só atualiza o checkpoint depois da promoção atômica e do manifesto
+`VALIDATED`. No restart, arquivos finais ainda em `DOWNLOADING`/`DOWNLOADED` são validados e
+promovidos, órfãos válidos são manifestados e `.tmp` ou Parquet inválido vai para quarentena.
+As views DuckDB `realtime_book_ticker`, `realtime_aggregate_trades`, `realtime_mark_price` e
+`realtime_kline_1m` apontam exclusivamente para arquivos validados. O raw preserva
+`payload_json` para reprocessamento.
+
+Execute apenas um recorder por raiz de storage/state DB. Processos concorrentes para os mesmos
+streams produziriam observações duplicadas e disputariam o checkpoint; coordenação distribuída
+fica fora deste marco.
 
 ## Configuração
 
@@ -128,5 +166,6 @@ O volume `./var` preserva datasets locais. A imagem fixa as duas flags de segura
 
 ## Próximo marco
 
-Recorder WebSocket de market data com micro-batches, checkpoints, reconexão e replay
-determinístico. Alpha e execução permanecem fora de escopo até seus respectivos gates.
+Somente depois do gate de 60 minutos do recorder: definir uma hipótese de research, protocolo de
+backtest e critérios contra leakage. Depth local, alpha e execução permanecem fora de escopo até
+seus respectivos gates; `LIVE_TRADING` e envio de ordens continuam impossíveis por configuração.

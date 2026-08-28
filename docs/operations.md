@@ -34,6 +34,36 @@ Parquet imutável. No rerun, cada resultado deve ser `skipped`. O comando també
 A auditoria cobre cada partição e o range agregado por símbolo, inclusive gaps entre dias. JSON e
 Markdown são gravados em `var/reports`; qualquer gate reprovado encerra o comando com status 1.
 
+## Recorder e replay
+
+Execute o aceite com os defaults seguros do Demo:
+
+```bash
+uv run binance-algo recorder start \
+  --symbols BTCUSDT,ETHUSDT,SOLUSDT --duration-seconds 3600 --metrics-port 9108
+uv run binance-algo recorder status
+```
+
+Antes de abrir o WebSocket, o comando sincroniza o relógio via `/fapi/v1/time` e rejeita offset
+acima do limite. Durante a captura, `/health/live` indica processo ativo, `/health/ready` exige
+eventos recentes nas duas rotas, writer saudável e fila não saturada, e `/metrics` expõe REST,
+WebSocket, queue, flush, qualidade e offset. `Ctrl+C` inicia shutdown gracioso; aguarde o relatório
+antes de reiniciar.
+
+O gate exige igualdade entre mensagens recebidas e linhas persistidas, zero drop, duplicata, gap,
+regressão e valor de mercado inválido, além de checksum e schema exatos. O relatório inclui
+p50/p95/p99 da latência ajustada pelo clock, staleness, conexões, reconnects, bytes e recuperação.
+
+Depois, copie `min_event_time_ms` e `max_event_time_ms` do JSON para reproduzir o range:
+
+```bash
+uv run binance-algo replay --dataset all --start <epoch-ms> --end <epoch-ms> --speed 1
+uv run binance-algo replay --dataset all --start <epoch-ms> --end <epoch-ms> --speed 100
+```
+
+O modo virtual não acessa rede nem espera tempo real. Use `--wall-clock` de modo intencional: em
+1×, um range de 60 minutos leva aproximadamente 60 minutos para ser entregue ao consumidor.
+
 ## Falhas conhecidas e resposta
 
 - DNS/rede indisponível: o cliente encerra após retries limitados e informa o endpoint.
@@ -49,6 +79,11 @@ Markdown são gravados em `var/reports`; qualquer gate reprovado encerra o coman
 - SQLite ocupado: `busy_timeout` é aplicado; a transação faz rollback em qualquer exceção.
 - Parquet ausente ou alterado: checksum falha e o gate não é promovido.
 - Gap, duplicata, desordem ou OHLC inválido: o relatório preserva contagens e o CLI retorna 1.
+- WebSocket stale/fechado: registra motivo, aplica backoff com jitter e reassina a mesma lista.
+- Fila saturada: falha explicitamente; não continua com perda silenciosa.
+- Crash depois do rename e antes do manifesto: o restart valida e promove o arquivo em voo.
+- `.tmp` residual ou Parquet órfão inválido: move a evidência para `recorder_recovery`.
+- Gate do recorder falhou: preserve JSON/Markdown e não avance para research/estratégia.
 
 Arquivos `.tmp` pertencem somente a uma tentativa atômica. `.part` pertence a um download
 retomável. Não remova manualmente os arquivos nem edite o SQLite durante uma ingestão.

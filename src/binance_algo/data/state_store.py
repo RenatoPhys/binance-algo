@@ -5,7 +5,7 @@ from __future__ import annotations
 import hashlib
 import sqlite3
 from collections.abc import Iterator
-from contextlib import contextmanager
+from contextlib import closing, contextmanager
 from pathlib import Path
 from typing import Any
 
@@ -130,7 +130,7 @@ class StateStore:
 
     def journal_mode(self) -> str:
         try:
-            with self._connect() as connection:
+            with closing(self._connect()) as connection:
                 row = connection.execute("PRAGMA journal_mode").fetchone()
         except sqlite3.Error as exc:
             raise StateStoreError(f"cannot read SQLite journal mode: {exc}") from exc
@@ -201,7 +201,7 @@ class StateStore:
 
     def get_data_file(self, file_id: str) -> DataFileRecord | None:
         try:
-            with self._connect() as connection:
+            with closing(self._connect()) as connection:
                 row = connection.execute(
                     "SELECT * FROM data_files WHERE file_id = ?", (file_id,)
                 ).fetchone()
@@ -219,6 +219,7 @@ class StateStore:
         interval: str | None = None,
         start_time_ms: int | None = None,
         end_time_ms: int | None = None,
+        ingestion_run_id: str | None = None,
     ) -> list[DataFileRecord]:
         clauses: list[str] = []
         parameters: list[object] = []
@@ -226,6 +227,7 @@ class StateStore:
             ("logical_dataset", logical_dataset),
             ("layer", layer),
             ("interval", interval),
+            ("ingestion_run_id", ingestion_run_id),
         ):
             if value is not None:
                 clauses.append(f"{column} = ?")
@@ -246,7 +248,7 @@ class StateStore:
             parameters.append(end_time_ms)
         where = f" WHERE {' AND '.join(clauses)}" if clauses else ""
         try:
-            with self._connect() as connection:
+            with closing(self._connect()) as connection:
                 rows = connection.execute(
                     "SELECT * FROM data_files"
                     f"{where} ORDER BY symbol, interval, start_time_ms, file_id",
@@ -255,6 +257,99 @@ class StateStore:
         except sqlite3.Error as exc:
             raise StateStoreError(f"cannot list data files: {exc}") from exc
         return [self._data_file_from_row(row) for row in rows]
+
+    def get_stream_checkpoint(self, stream_key: str) -> str | None:
+        try:
+            with closing(self._connect()) as connection:
+                row = connection.execute(
+                    "SELECT checkpoint_json FROM stream_checkpoints WHERE stream_key = ?",
+                    (stream_key,),
+                ).fetchone()
+        except sqlite3.Error as exc:
+            raise StateStoreError(f"cannot read stream checkpoint {stream_key}: {exc}") from exc
+        return str(row["checkpoint_json"]) if row is not None else None
+
+    def upsert_stream_checkpoint(self, stream_key: str, checkpoint_json: str) -> None:
+        try:
+            with self.transaction() as connection:
+                connection.execute(
+                    """
+                    INSERT INTO stream_checkpoints(stream_key, checkpoint_json, updated_at_ms)
+                    VALUES (?, ?, ?)
+                    ON CONFLICT(stream_key) DO UPDATE SET
+                        checkpoint_json = excluded.checkpoint_json,
+                        updated_at_ms = excluded.updated_at_ms
+                    """,
+                    (stream_key, checkpoint_json, now_ms()),
+                )
+        except sqlite3.Error as exc:
+            raise StateStoreError(f"cannot write stream checkpoint {stream_key}: {exc}") from exc
+
+    def list_stream_checkpoints(self) -> dict[str, str]:
+        try:
+            with closing(self._connect()) as connection:
+                rows = connection.execute(
+                    """
+                    SELECT stream_key, checkpoint_json
+                    FROM stream_checkpoints ORDER BY stream_key
+                    """
+                ).fetchall()
+        except sqlite3.Error as exc:
+            raise StateStoreError(f"cannot list stream checkpoints: {exc}") from exc
+        return {str(row["stream_key"]): str(row["checkpoint_json"]) for row in rows}
+
+    def validate_stream_file_with_checkpoint(
+        self,
+        file_id: str,
+        *,
+        checksum: str,
+        row_count: int,
+        stream_key: str,
+        checkpoint_json: str,
+    ) -> DataFileRecord:
+        """Atomically make a downloaded stream file visible and advance its checkpoint."""
+
+        try:
+            with self.transaction() as connection:
+                row = connection.execute(
+                    "SELECT * FROM data_files WHERE file_id = ?", (file_id,)
+                ).fetchone()
+                if row is None:
+                    raise StateStoreError(f"unknown data file: {file_id}")
+                current = DataFileStatus(str(row["status"]))
+                if current not in {DataFileStatus.DOWNLOADED, DataFileStatus.VALIDATED}:
+                    raise InvalidStateTransition(
+                        f"data file {file_id}: {current.value} -> VALIDATED with checkpoint"
+                    )
+                connection.execute(
+                    """
+                    UPDATE data_files
+                    SET status = ?, checksum = ?, row_count = ?, updated_at_ms = ?,
+                        last_error = NULL
+                    WHERE file_id = ?
+                    """,
+                    (DataFileStatus.VALIDATED.value, checksum, row_count, now_ms(), file_id),
+                )
+                connection.execute(
+                    """
+                    INSERT INTO stream_checkpoints(stream_key, checkpoint_json, updated_at_ms)
+                    VALUES (?, ?, ?)
+                    ON CONFLICT(stream_key) DO UPDATE SET
+                        checkpoint_json = excluded.checkpoint_json,
+                        updated_at_ms = excluded.updated_at_ms
+                    """,
+                    (stream_key, checkpoint_json, now_ms()),
+                )
+                updated = connection.execute(
+                    "SELECT * FROM data_files WHERE file_id = ?", (file_id,)
+                ).fetchone()
+        except sqlite3.Error as exc:
+            raise StateStoreError(
+                f"cannot validate stream file and checkpoint {file_id}: {exc}"
+            ) from exc
+        if updated is None:
+            raise StateStoreError(f"validated stream file disappeared: {file_id}")
+        return self._data_file_from_row(updated)
 
     def register_schema_version(
         self, logical_dataset: str, schema_version: int, schema_json: str
@@ -426,7 +521,7 @@ class StateStore:
 
     def data_file_counts(self) -> dict[str, int]:
         try:
-            with self._connect() as connection:
+            with closing(self._connect()) as connection:
                 rows = connection.execute(
                     "SELECT status, COUNT(*) AS count FROM data_files GROUP BY status"
                 ).fetchall()

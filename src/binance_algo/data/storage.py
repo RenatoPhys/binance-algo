@@ -49,7 +49,7 @@ class LocalFilesystemStorage:
                 return target
             raise StorageError(f"immutable target already exists with different content: {target}")
 
-        temporary = target.with_name(f".{target.name}.{uuid.uuid4().hex}.tmp")
+        temporary = target.with_name(f".{uuid.uuid4().hex}.tmp")
         try:
             with temporary.open("xb") as stream:
                 stream.write(payload)
@@ -73,7 +73,7 @@ class LocalFilesystemStorage:
                 f"immutable parquet target already exists with different data: {target}"
             )
 
-        temporary = target.with_name(f".{target.name}.{uuid.uuid4().hex}.tmp")
+        temporary = target.with_name(f".{uuid.uuid4().hex}.tmp")
         try:
             parquet_compression = cast(
                 Literal["lz4", "uncompressed", "snappy", "gzip", "brotli", "zstd"],

@@ -85,3 +85,27 @@ O gate de qualidade registra row count, timestamps mínimo/máximo, nulos, dupli
 gaps e duração, preços/quantidades negativos, OHLC inválido, close time inválido, timestamps
 desalinhados, candles abertos, checksum, schema e status de comparação com outra fonte. Gaps são
 contados também entre partições diárias.
+
+## Streams em tempo real — schema version 1
+
+Todos os datasets carregam `event_id`, `symbol`, `event_time_ms`, `received_time_ns`,
+`processed_time_ns`, `connection_id`, `ingestion_run_id`, `source`, `schema_version` e
+`payload_json`. `event_id` é estável entre runs para o mesmo stream/payload; os timestamps locais
+e IDs operacionais preservam cada observação. Strings decimais do venue são mantidas junto das
+representações `Float64`, e valores não numéricos ou não finitos são rejeitados no parser.
+
+| Dataset | Chave/ordem observada | Campos específicos principais |
+|---|---|---|
+| `book_ticker` | `symbol + update_id` | bid/ask price e quantity, transaction time |
+| `aggregate_trades` | `symbol + aggregate_trade_id` | price, quantity, first/last trade ID, maker flag |
+| `mark_price` | `symbol + event_time_ms` | mark/index/settle price, funding rate e próxima funding |
+| `kline_1m` | atualizações de `symbol + open_time_ms` | OHLCV, trades, taker volumes e `is_closed` |
+
+Os arquivos ficam em `raw/binance/usdm/<dataset>/date=.../hour=.../symbol=...`. Cada micro-batch
+é ordenado por evento/recebimento/ID, recebe checksum SHA-256 e passa por
+`DOWNLOADING -> DOWNLOADED -> VALIDATED`. O checkpoint `dataset:symbol` só muda depois desse
+commit durável.
+
+O gate considera gap de `aggregate_trade_id`, regressões de trade/update ID, invariantes de
+preço/volume, schema, checksum, duplicatas globais e igualdade mensagens/linhas. `bookTicker` não
+é tratado como diff-depth e não sustenta um order book local.

@@ -45,6 +45,12 @@ class BinanceConfig(StrictModel):
         self.rest_base_url = self.rest_base_url.rstrip("/")
         if not self.rest_base_url.startswith("https://"):
             raise ValueError("binance.rest_base_url must use HTTPS")
+        self.market_ws_base_url = self.market_ws_base_url.rstrip("/")
+        if not self.market_ws_base_url.startswith("wss://"):
+            raise ValueError("binance.market_ws_base_url must use WSS")
+        self.websocket_api_url = self.websocket_api_url.rstrip("/")
+        if not self.websocket_api_url.startswith("wss://"):
+            raise ValueError("binance.websocket_api_url must use WSS")
         return self
 
 
@@ -105,6 +111,26 @@ class StreamsConfig(StrictModel):
     kline_1m: bool = True
     depth: bool = False
 
+    @model_validator(mode="after")
+    def enforce_basic_recorder_scope(self) -> Self:
+        if self.depth:
+            raise ValueError("streams.depth remains disabled until the basic recorder is stable")
+        if not any((self.book_ticker, self.aggregate_trades, self.mark_price, self.kline_1m)):
+            raise ValueError("at least one public market stream must be enabled")
+        return self
+
+
+class RecorderConfig(StrictModel):
+    queue_capacity: int = Field(default=100_000, ge=1_000, le=2_000_000)
+    queue_put_timeout_seconds: float = Field(default=1.0, gt=0, le=30)
+    stale_after_seconds: float = Field(default=15.0, gt=1, le=300)
+    reconnect_base_seconds: float = Field(default=0.5, ge=0, le=30)
+    reconnect_stable_after_seconds: float = Field(default=30.0, gt=0, le=600)
+    connection_max_seconds: int = Field(default=82_800, ge=300, le=86_399)
+    shutdown_timeout_seconds: float = Field(default=30.0, gt=1, le=300)
+    metrics_host: str = "127.0.0.1"
+    metrics_port: int = Field(default=9108, ge=0, le=65_535)
+
 
 class SafetyConfig(StrictModel):
     live_trading: bool = False
@@ -143,6 +169,7 @@ class Settings(StrictModel):
     archives: ArchiveConfig
     universe: UniverseConfig
     streams: StreamsConfig
+    recorder: RecorderConfig
     safety: SafetyConfig
     credentials: Credentials = Field(default_factory=Credentials)
     _project_root: Path = PrivateAttr(default_factory=Path.cwd)

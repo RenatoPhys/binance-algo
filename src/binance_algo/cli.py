@@ -8,10 +8,12 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Annotated, NoReturn
 
+import orjson
 import typer
 from rich.console import Console
 from rich.table import Table
 
+from binance_algo.clock import ExchangeClock
 from binance_algo.common.errors import BinanceAlgoError, DataQualityError
 from binance_algo.config import Settings, load_settings
 from binance_algo.data.archive_client import (
@@ -41,6 +43,14 @@ from binance_algo.data.normalize import (
     write_normalization_report,
 )
 from binance_algo.data.quality import audit_kline_files, write_quality_report
+from binance_algo.data.recorder import RecorderRunResult, run_recorder
+from binance_algo.data.replay import (
+    RealReplayClock,
+    ReplayEngine,
+    VirtualReplayClock,
+    parse_replay_datasets,
+    select_replay_files,
+)
 from binance_algo.data.state_store import StateStore
 from binance_algo.data.storage import LocalFilesystemStorage
 from binance_algo.data.universe import (
@@ -52,16 +62,19 @@ from binance_algo.data.universe import (
 from binance_algo.doctor import run_doctor
 from binance_algo.exchange.binance_usdm.rest import BinanceUSDMRestClient
 from binance_algo.logging import configure_logging, get_logger
+from binance_algo.observability.metrics import RecorderMetrics
 
 app = typer.Typer(help="Auditable Binance USD-M Futures public-data foundation.")
 exchange_info_app = typer.Typer(help="Snapshot and inspect exchange metadata.")
 universe_app = typer.Typer(help="Build point-in-time research universes.")
 backfill_app = typer.Typer(help="Download official historical public archives.")
 data_app = typer.Typer(help="Normalize, catalog, and audit canonical market data.")
+recorder_app = typer.Typer(help="Record resilient public market streams to Parquet.")
 app.add_typer(exchange_info_app, name="exchange-info")
 app.add_typer(universe_app, name="universe")
 app.add_typer(backfill_app, name="backfill")
 app.add_typer(data_app, name="data")
+app.add_typer(recorder_app, name="recorder")
 console = Console()
 
 
@@ -485,6 +498,204 @@ def data_audit(
     console.print(f"Reports: {json_report}\n         {markdown_report}")
     if not report.passed:
         raise typer.Exit(code=1)
+
+
+async def _run_recorder_with_clock(
+    settings: Settings,
+    *,
+    symbols: tuple[str, ...],
+    duration_seconds: float,
+    metrics_port: int | None,
+) -> RecorderRunResult:
+    metrics = RecorderMetrics(queue_capacity=settings.recorder.queue_capacity)
+    async with BinanceUSDMRestClient(
+        base_url=settings.binance.rest_base_url,
+        timeout_seconds=settings.binance.request_timeout_seconds,
+        max_attempts=settings.binance.retry_max_attempts,
+        retry_base_seconds=settings.binance.retry_base_seconds,
+        metrics=metrics,
+    ) as client:
+        clock = ExchangeClock()
+        sync = await clock.synchronize(client)
+    if abs(sync.offset_ms) > settings.binance.clock_max_offset_ms:
+        raise DataQualityError(
+            f"clock offset {sync.offset_ms}ms exceeds {settings.binance.clock_max_offset_ms}ms"
+        )
+    return await run_recorder(
+        settings,
+        symbols=symbols,
+        duration_seconds=duration_seconds,
+        clock_offset_ms=sync.offset_ms,
+        metrics_port=metrics_port,
+        metrics=metrics,
+    )
+
+
+@recorder_app.command("start")
+def recorder_start(
+    ctx: typer.Context,
+    symbols: Annotated[str, typer.Option(help="Comma-separated USD-M symbols.")] = (
+        "BTCUSDT,ETHUSDT,SOLUSDT"
+    ),
+    duration_seconds: Annotated[
+        float,
+        typer.Option(help="Recording duration; use 3600 for the Phase 2 acceptance run."),
+    ] = 3_600.0,
+    metrics_port: Annotated[
+        int | None,
+        typer.Option(help="Override the local metrics/health port; 0 selects an ephemeral port."),
+    ] = None,
+) -> None:
+    """Record configured public streams with lossless bounded buffering."""
+
+    try:
+        settings = _settings(ctx)
+        _configure(settings)
+        parsed_symbols = parse_symbols(symbols)
+        if duration_seconds <= 0:
+            raise typer.BadParameter("duration must be positive")
+        if metrics_port is not None and not 0 <= metrics_port <= 65_535:
+            raise typer.BadParameter("metrics port must be between 0 and 65535")
+        result = asyncio.run(
+            _run_recorder_with_clock(
+                settings,
+                symbols=parsed_symbols,
+                duration_seconds=duration_seconds,
+                metrics_port=metrics_port,
+            )
+        )
+    except BinanceAlgoError as exc:
+        _fail(exc)
+
+    table = Table(title=f"recorder quality gate: {'PASS' if result.report.passed else 'FAIL'}")
+    table.add_column("stream")
+    table.add_column("messages", justify="right")
+    table.add_column("rows", justify="right")
+    table.add_column("duplicates", justify="right")
+    table.add_column("gaps", justify="right")
+    table.add_column("p95 ms", justify="right")
+    table.add_column("gate")
+    for dataset in result.report.datasets:
+        table.add_row(
+            dataset.event_type,
+            str(dataset.messages_received),
+            str(dataset.rows_persisted),
+            str(dataset.duplicate_event_count),
+            str(dataset.sequence_gap_count),
+            "" if dataset.latency_p95_ms is None else f"{dataset.latency_p95_ms:.2f}",
+            "PASS" if dataset.passed else "FAIL",
+        )
+    console.print(table)
+    console.print(
+        f"Run: {result.report.run_id}\n"
+        f"Dropped: {result.report.dropped_events_total}; "
+        f"reconnects: {result.report.reconnects_total}\n"
+        f"DuckDB: {settings.duckdb_path}\n"
+        f"Reports: {result.json_report}\n         {result.markdown_report}"
+    )
+
+
+@recorder_app.command("status")
+def recorder_status(ctx: typer.Context) -> None:
+    """Show the latest durable recorder report and checkpoint count."""
+
+    try:
+        settings = _settings(ctx)
+        candidates = sorted(
+            settings.reports_root.glob("recorder_*.json"), key=lambda path: path.stat().st_mtime_ns
+        )
+        if not candidates:
+            raise DataQualityError("no recorder report exists yet")
+        latest = candidates[-1]
+        payload = orjson.loads(latest.read_bytes())
+        if not isinstance(payload, dict):
+            raise DataQualityError(f"invalid recorder report: {latest}")
+        state_store = StateStore(settings.state_db_path)
+        state_store.initialize()
+        checkpoints = state_store.list_stream_checkpoints()
+    except (BinanceAlgoError, OSError, orjson.JSONDecodeError) as exc:
+        if isinstance(exc, BinanceAlgoError):
+            _fail(exc)
+        _fail(DataQualityError(str(exc)))
+
+    console.print(
+        f"Latest report: {latest}\n"
+        f"Run: {payload.get('run_id')}\n"
+        f"Gate: {'PASS' if payload.get('passed') else 'FAIL'}\n"
+        f"Messages/rows: {payload.get('messages_received_total')} / "
+        f"{payload.get('rows_persisted_total')}\n"
+        f"Dropped/reconnects: {payload.get('dropped_events_total')} / "
+        f"{payload.get('reconnects_total')}\n"
+        f"Checkpoints: {len(checkpoints)}"
+    )
+
+
+def _parse_replay_time(value: str, *, option: str) -> int:
+    if value.isdigit():
+        return int(value)
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError as exc:
+        raise DataQualityError(
+            f"{option} must be epoch milliseconds or ISO-8601 with timezone"
+        ) from exc
+    if parsed.tzinfo is None:
+        raise DataQualityError(f"{option} must include a timezone, preferably Z")
+    return int(parsed.timestamp() * 1_000)
+
+
+@app.command("replay")
+def replay(
+    ctx: typer.Context,
+    start: Annotated[str, typer.Option(help="Inclusive epoch milliseconds or ISO-8601 timestamp.")],
+    end: Annotated[str, typer.Option(help="Inclusive epoch milliseconds or ISO-8601 timestamp.")],
+    dataset: Annotated[
+        str,
+        typer.Option(help="One or more recorder datasets, comma-separated, or all."),
+    ] = "all",
+    symbols: Annotated[str, typer.Option(help="Comma-separated USD-M symbols.")] = (
+        "BTCUSDT,ETHUSDT,SOLUSDT"
+    ),
+    speed: Annotated[float, typer.Option(help="Temporal replay speed multiplier.")] = 100.0,
+    wall_clock: Annotated[
+        bool,
+        typer.Option(help="Actually wait between events; default uses an injected virtual clock."),
+    ] = False,
+) -> None:
+    """Replay recorded events in deterministic temporal order without network access."""
+
+    try:
+        settings = _settings(ctx)
+        datasets = parse_replay_datasets(dataset)
+        parsed_symbols = parse_symbols(symbols)
+        start_ms = _parse_replay_time(start, option="--start")
+        end_ms = _parse_replay_time(end, option="--end")
+        state_store = StateStore(settings.state_db_path)
+        state_store.initialize()
+        records = select_replay_files(
+            state_store,
+            datasets=datasets,
+            symbols=parsed_symbols,
+            start_time_ms=start_ms,
+            end_time_ms=end_ms,
+        )
+        engine = ReplayEngine(records=records, start_time_ms=start_ms, end_time_ms=end_ms)
+        deterministic = engine.verify_determinism()
+        clock = RealReplayClock() if wall_clock else VirtualReplayClock()
+        replayed = asyncio.run(engine.run(speed=speed, clock=clock))
+        if replayed.digest != deterministic.digest:
+            raise DataQualityError("scheduled replay digest diverged from deterministic scan")
+    except BinanceAlgoError as exc:
+        _fail(exc)
+
+    virtual_elapsed = clock.elapsed_seconds if isinstance(clock, VirtualReplayClock) else None
+    console.print(
+        f"Replay PASS: {replayed.event_count} events\n"
+        f"Digest: {replayed.digest}\n"
+        f"Range: {replayed.first_event_time_ms}..{replayed.last_event_time_ms}\n"
+        f"Speed: {speed}x; clock: {'wall' if wall_clock else 'virtual'}"
+        + (f"; virtual elapsed: {virtual_elapsed:.3f}s" if virtual_elapsed is not None else "")
+    )
 
 
 if __name__ == "__main__":

@@ -54,6 +54,17 @@ streams:
   kline_1m: true
   depth: false
 
+recorder:
+  queue_capacity: 100000
+  queue_put_timeout_seconds: 1.0
+  stale_after_seconds: 15.0
+  reconnect_base_seconds: 0.5
+  reconnect_stable_after_seconds: 30.0
+  connection_max_seconds: 82800
+  shutdown_timeout_seconds: 30.0
+  metrics_host: 127.0.0.1
+  metrics_port: 9108
+
 safety:
   live_trading: false
   allow_order_submission: false
