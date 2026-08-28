@@ -221,6 +221,38 @@ def test_campaign_expansion_is_deterministic_constrained_and_path_independent(
         )
 
 
+def test_campaign_identity_includes_resolved_research_defaults(tmp_path: Path) -> None:
+    _, config, data_root, source, baseline = _plan(tmp_path)
+    changed_fees = config.model_copy(
+        update={
+            "fee_schedule": config.fee_schedule.model_copy(
+                update={"effective_from": config.fee_schedule.effective_from.replace(year=2020)}
+            )
+        }
+    )
+    changed_seed = config.model_copy(update={"random_seed": config.random_seed + 1})
+
+    fee_plan = plan_campaign(
+        source,
+        project_root=PROJECT_ROOT,
+        data_root=data_root,
+        research_config=changed_fees,
+        code_fingerprint=_fingerprint(),
+    )
+    seed_plan = plan_campaign(
+        source,
+        project_root=PROJECT_ROOT,
+        data_root=data_root,
+        research_config=changed_seed,
+        code_fingerprint=_fingerprint(),
+    )
+
+    assert fee_plan.campaign_id != baseline.campaign_id
+    assert seed_plan.campaign_id != baseline.campaign_id
+    assert fee_plan.trials[0].experiment_id != baseline.trials[0].experiment_id
+    assert seed_plan.trials[0].experiment_id != baseline.trials[0].experiment_id
+
+
 def test_discovery_plan_is_summary_only_and_blocks_robustness_and_promotion(
     tmp_path: Path,
 ) -> None:
