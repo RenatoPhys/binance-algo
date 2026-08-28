@@ -60,6 +60,12 @@ features, label, strategy, política de portfólio, custos, splits, validação,
 fingerprint. Alterações nesses elementos criam outro `experiment_id`; um rerun sem alteração cria
 somente outra tentativa.
 
-O PR 4 torna esse contrato persistente e auditável, mas não autoriza sweeps ad hoc. A execução
-pelo registry começa com o experiment runner do PR 5, e campanhas amplas continuam bloqueadas
-até o planner/runner do PR 6.
+O registry, experiment runner e campaign runner tornam esse contrato persistente e auditável, mas
+não autorizam sweeps ad hoc. Toda campanha registra o número integral de trials e preserva falhas
+e resultados negativos.
+
+Ablações devem ser pré-declaradas como pares baseline/candidate dentro da campanha. Os deltas são
+sempre interpretados como `com feature - sem feature`, mesmo em remove-one, e incluem retorno,
+Sharpe, drawdown, rank IC, turnover, custos explícitos, capacidade e concentração mensal. A regra
+automática e qualquer override ficam registrados com motivo. Uma rejeição é contextual: não
+desativa a feature globalmente e não pode ser apagada do histórico.

@@ -17,6 +17,7 @@ import orjson
 from binance_algo.common.errors import InvalidResearchTransition, ResearchStoreError
 from binance_algo.research.experiments.canonical import (
     canonical_json_text,
+    canonical_sha256,
 )
 from binance_algo.research.experiments.ids import deterministic_run_id, experiment_id
 from binance_algo.research.experiments.migrations import (
@@ -26,6 +27,9 @@ from binance_algo.research.experiments.migrations import (
 from binance_algo.research.experiments.models import (
     CampaignStatus,
     ExperimentSpec,
+    FeatureDecision,
+    FeatureEvaluationSpec,
+    FeatureEvaluationType,
     HypothesisSpec,
     HypothesisStatus,
     MetricScope,
@@ -149,6 +153,36 @@ class CampaignRecord:
     finished_at_ms: int | None
     trial_count: int
     last_error: str | None
+
+
+@dataclass(frozen=True, slots=True)
+class FeatureEvaluationRecord:
+    evaluation_id: str
+    run_id: str
+    experiment_id: str
+    hypothesis_id: str
+    feature_id: str
+    evaluation_type: FeatureEvaluationType
+    scope: str
+    metric_name: str
+    metric_value: float | None
+    decision: FeatureDecision
+    decision_reason: str
+    context: Mapping[str, Any]
+    created_at_ms: int
+
+    def to_spec(self) -> FeatureEvaluationSpec:
+        return FeatureEvaluationSpec(
+            run_id=self.run_id,
+            feature_id=self.feature_id,
+            evaluation_type=self.evaluation_type,
+            scope=self.scope,
+            metric_name=self.metric_name,
+            metric_value=self.metric_value,
+            decision=self.decision,
+            decision_reason=self.decision_reason,
+            context=dict(self.context),
+        )
 
 
 class ResearchStore:
@@ -1227,6 +1261,194 @@ class ResearchStore:
             for row in rows
         )
 
+    def record_feature_evaluation(
+        self,
+        spec: FeatureEvaluationSpec,
+    ) -> FeatureEvaluationRecord:
+        return self.record_feature_evaluations((spec,))[0]
+
+    def record_feature_evaluations(
+        self,
+        specs: Sequence[FeatureEvaluationSpec],
+    ) -> tuple[FeatureEvaluationRecord, ...]:
+        if not specs:
+            raise ResearchStoreError("feature evaluation batch cannot be empty")
+        identifiers = tuple(canonical_sha256(spec.model_dump(mode="python")) for spec in specs)
+        if len(set(identifiers)) != len(identifiers):
+            raise ResearchStoreError("feature evaluation batch contains duplicates")
+        created: list[FeatureEvaluationRecord] = []
+        try:
+            with self.transaction() as connection:
+                for identifier, spec in zip(identifiers, specs, strict=True):
+                    run = connection.execute(
+                        """
+                        SELECT r.status, r.experiment_id, e.hypothesis_id
+                        FROM research_experiment_runs AS r
+                        JOIN research_experiments AS e
+                          ON e.experiment_id = r.experiment_id
+                        WHERE r.run_id = ?
+                        """,
+                        (spec.run_id,),
+                    ).fetchone()
+                    if run is None:
+                        raise ResearchStoreError(
+                            f"feature evaluation references an unknown run: {spec.run_id}"
+                        )
+                    if RunStatus(str(run["status"])) is not RunStatus.SUCCEEDED:
+                        raise ResearchStoreError(
+                            "feature evaluations require a succeeded experiment run"
+                        )
+                    feature = connection.execute(
+                        "SELECT 1 FROM research_feature_definitions WHERE feature_id = ?",
+                        (spec.feature_id,),
+                    ).fetchone()
+                    if feature is None:
+                        raise ResearchStoreError(
+                            f"feature evaluation references an unknown feature: {spec.feature_id}"
+                        )
+                    context_json = canonical_json_text(spec.context)
+                    timestamp = now_ms()
+                    connection.execute(
+                        """
+                        INSERT OR IGNORE INTO research_feature_evaluations(
+                            evaluation_id, run_id, feature_id, evaluation_type,
+                            scope, metric_name, metric_value, decision,
+                            decision_reason, context_json, created_at_ms
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        """,
+                        (
+                            identifier,
+                            spec.run_id,
+                            spec.feature_id,
+                            spec.evaluation_type.value,
+                            spec.scope,
+                            spec.metric_name,
+                            spec.metric_value,
+                            spec.decision.value,
+                            spec.decision_reason,
+                            context_json,
+                            timestamp,
+                        ),
+                    )
+                    row = connection.execute(
+                        """
+                        SELECT fe.*, r.experiment_id, e.hypothesis_id
+                        FROM research_feature_evaluations AS fe
+                        JOIN research_experiment_runs AS r ON r.run_id = fe.run_id
+                        JOIN research_experiments AS e
+                          ON e.experiment_id = r.experiment_id
+                        WHERE fe.evaluation_id = ?
+                        """,
+                        (identifier,),
+                    ).fetchone()
+                    if row is None:
+                        raise ResearchStoreError(
+                            f"registered feature evaluation disappeared: {identifier}"
+                        )
+                    record = self._feature_evaluation_from_row(row)
+                    if record.to_spec() != spec:
+                        raise ResearchStoreError(
+                            f"immutable feature evaluation conflict: {identifier}"
+                        )
+                    created.append(record)
+        except ResearchStoreError:
+            raise
+        except sqlite3.Error as exc:
+            raise ResearchStoreError(f"cannot record feature evaluation: {exc}") from exc
+        return tuple(created)
+
+    def list_feature_evaluations(
+        self,
+        *,
+        feature_id: str | None = None,
+        run_id: str | None = None,
+        hypothesis_id: str | None = None,
+    ) -> tuple[FeatureEvaluationRecord, ...]:
+        filters: list[str] = []
+        parameters: list[str] = []
+        if feature_id is not None:
+            filters.append("fe.feature_id = ?")
+            parameters.append(feature_id)
+        if run_id is not None:
+            filters.append("fe.run_id = ?")
+            parameters.append(run_id)
+        if hypothesis_id is not None:
+            filters.append("e.hypothesis_id = ?")
+            parameters.append(hypothesis_id)
+        query = """
+            SELECT fe.*, r.experiment_id, e.hypothesis_id
+            FROM research_feature_evaluations AS fe
+            JOIN research_experiment_runs AS r ON r.run_id = fe.run_id
+            JOIN research_experiments AS e ON e.experiment_id = r.experiment_id
+        """
+        if filters:
+            query += " WHERE " + " AND ".join(filters)
+        query += " ORDER BY fe.created_at_ms, fe.evaluation_id"
+        try:
+            with closing(self._connect()) as connection:
+                rows = connection.execute(query, tuple(parameters)).fetchall()
+        except sqlite3.Error as exc:
+            raise ResearchStoreError(f"cannot list feature evaluations: {exc}") from exc
+        return tuple(self._feature_evaluation_from_row(row) for row in rows)
+
+    def campaigns_using_feature(self, feature_id: str) -> tuple[CampaignRecord, ...]:
+        try:
+            with closing(self._connect()) as connection:
+                exists = connection.execute(
+                    "SELECT 1 FROM research_feature_definitions WHERE feature_id = ?",
+                    (feature_id,),
+                ).fetchone()
+                if exists is None:
+                    raise ResearchStoreError(f"unknown feature: {feature_id}")
+                rows = connection.execute(
+                    """
+                    SELECT DISTINCT c.*
+                    FROM research_feature_set_members AS fsm
+                    JOIN research_experiments AS e
+                      ON e.feature_set_id = fsm.feature_set_id
+                    JOIN research_campaign_experiments AS ce
+                      ON ce.experiment_id = e.experiment_id
+                    JOIN research_campaigns AS c ON c.campaign_id = ce.campaign_id
+                    WHERE fsm.feature_id = ?
+                    ORDER BY c.created_at_ms, c.campaign_id
+                    """,
+                    (feature_id,),
+                ).fetchall()
+        except ResearchStoreError:
+            raise
+        except sqlite3.Error as exc:
+            raise ResearchStoreError(
+                f"cannot list campaigns for feature {feature_id}: {exc}"
+            ) from exc
+        return tuple(self._campaign_from_row(row) for row in rows)
+
+    def experiment_uses_feature(self, identifier: str, feature_id: str) -> bool:
+        try:
+            with closing(self._connect()) as connection:
+                experiment = connection.execute(
+                    "SELECT 1 FROM research_experiments WHERE experiment_id = ?",
+                    (identifier,),
+                ).fetchone()
+                if experiment is None:
+                    raise ResearchStoreError(f"unknown experiment: {identifier}")
+                row = connection.execute(
+                    """
+                    SELECT 1
+                    FROM research_experiments AS e
+                    JOIN research_feature_set_members AS fsm
+                      ON fsm.feature_set_id = e.feature_set_id
+                    WHERE e.experiment_id = ? AND fsm.feature_id = ?
+                    """,
+                    (identifier, feature_id),
+                ).fetchone()
+        except ResearchStoreError:
+            raise
+        except sqlite3.Error as exc:
+            raise ResearchStoreError(
+                f"cannot inspect experiment feature membership: {exc}"
+            ) from exc
+        return row is not None
+
     def _connect(self) -> sqlite3.Connection:
         connection = sqlite3.connect(
             self.path,
@@ -1332,6 +1554,24 @@ class ResearchStore:
             last_error=str(row["last_error"]) if row["last_error"] is not None else None,
         )
 
+    @staticmethod
+    def _feature_evaluation_from_row(row: sqlite3.Row) -> FeatureEvaluationRecord:
+        return FeatureEvaluationRecord(
+            evaluation_id=str(row["evaluation_id"]),
+            run_id=str(row["run_id"]),
+            experiment_id=str(row["experiment_id"]),
+            hypothesis_id=str(row["hypothesis_id"]),
+            feature_id=str(row["feature_id"]),
+            evaluation_type=FeatureEvaluationType(str(row["evaluation_type"])),
+            scope=str(row["scope"]),
+            metric_name=str(row["metric_name"]),
+            metric_value=(float(row["metric_value"]) if row["metric_value"] is not None else None),
+            decision=FeatureDecision(str(row["decision"])),
+            decision_reason=str(row["decision_reason"]),
+            context=orjson.loads(str(row["context_json"])),
+            created_at_ms=int(row["created_at_ms"]),
+        )
+
 
 __all__ = [
     "CAMPAIGN_TRANSITIONS",
@@ -1339,6 +1579,7 @@ __all__ = [
     "RUN_TRANSITIONS",
     "CampaignRecord",
     "ExperimentRunRecord",
+    "FeatureEvaluationRecord",
     "ResearchArtifactRecord",
     "ResearchMetricRecord",
     "ResearchRegistryStatus",

@@ -170,3 +170,19 @@ O coordenador registra definições e associações antes de executar. Cada work
 SQLite; não há conexão compartilhada ou infraestrutura distribuída. Resume reaproveita apenas
 sucessos íntegros e cria attempts novos para falhas. O report agregado é uma visão atômica e
 mutável sobre runs imutáveis, não uma fonte paralela de verdade.
+
+O PR 7 acrescenta memória contextual sem transformar decisão local em status global:
+
+```text
+campaign baseline/candidate -> verified successful runs -> with-minus-without deltas
+                                                               |
+                                                               v
+                            immutable feature evaluations + canonical context
+                                                               |
+                                                               v
+                                  derived feature/hypothesis history reports
+```
+
+O registry retém cada métrica e motivo, inclusive rejeições. O cálculo de ablação valida o
+artifact mensal e recusa pares que diferem fora dos parâmetros da strategy. Relatórios podem ser
+sobrescritos porque são views; avaliações e runs não podem.

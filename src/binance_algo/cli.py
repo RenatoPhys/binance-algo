@@ -74,6 +74,7 @@ from binance_algo.logging import configure_logging, get_logger
 from binance_algo.observability.metrics import RecorderMetrics
 from binance_algo.research.dataset import build_and_persist_research_dataset
 from binance_algo.research.datasets.references import load_dataset_reference
+from binance_algo.research.experiments.ablation import AblationRunner
 from binance_algo.research.experiments.campaign import (
     CampaignPlan,
     campaign_spec_from_stored_payload,
@@ -82,6 +83,10 @@ from binance_algo.research.experiments.campaign import (
 )
 from binance_algo.research.experiments.campaign_runner import CampaignRunner
 from binance_algo.research.experiments.compare import write_campaign_comparison
+from binance_algo.research.experiments.ledger import (
+    write_feature_history_report,
+    write_hypothesis_history_report,
+)
 from binance_algo.research.experiments.models import HypothesisSpec
 from binance_algo.research.experiments.registry import sync_builtin_registry
 from binance_algo.research.experiments.runner import (
@@ -104,6 +109,7 @@ research_hypothesis_app = typer.Typer(help="Register and inspect research hypoth
 research_feature_app = typer.Typer(help="Inspect persisted feature definitions.")
 research_experiment_app = typer.Typer(help="Run and verify immutable research experiments.")
 research_campaign_app = typer.Typer(help="Plan, run, resume, and compare research campaigns.")
+research_ablation_app = typer.Typer(help="Evaluate contextual feature ablations.")
 app.add_typer(exchange_info_app, name="exchange-info")
 app.add_typer(universe_app, name="universe")
 app.add_typer(backfill_app, name="backfill")
@@ -116,6 +122,7 @@ research_app.add_typer(research_hypothesis_app, name="hypothesis")
 research_app.add_typer(research_feature_app, name="feature")
 research_app.add_typer(research_experiment_app, name="experiment")
 research_app.add_typer(research_campaign_app, name="campaign")
+research_app.add_typer(research_ablation_app, name="ablation")
 console = Console()
 
 
@@ -758,6 +765,26 @@ def research_hypothesis_show(ctx: typer.Context, hypothesis_id: str) -> None:
     console.print_json(json=orjson.dumps(hypothesis.model_dump(mode="json")).decode())
 
 
+@research_hypothesis_app.command("history")
+def research_hypothesis_history(ctx: typer.Context, hypothesis_id: str) -> None:
+    """Write the contextual feature-evaluation history for one hypothesis."""
+
+    try:
+        settings = _settings(ctx)
+        _configure(settings)
+        result = write_hypothesis_history_report(
+            store=ResearchStore(settings.research_db_path),
+            hypothesis_id=hypothesis_id,
+            reports_root=settings.reports_root,
+        )
+    except BinanceAlgoError as exc:
+        _fail(exc)
+    console.print(
+        f"Hypothesis history: evaluations={result.evaluation_count}\n"
+        f"JSON: {result.report_json_path}\nMarkdown: {result.report_markdown_path}"
+    )
+
+
 @research_feature_app.command("list")
 def research_feature_list(ctx: typer.Context) -> None:
     """List persisted feature IDs, versions, and lifecycle status."""
@@ -794,6 +821,85 @@ def research_feature_show(ctx: typer.Context, feature_id: str) -> None:
     except BinanceAlgoError as exc:
         _fail(exc)
     console.print_json(json=orjson.dumps(feature).decode())
+
+
+@research_feature_app.command("history")
+def research_feature_history(ctx: typer.Context, feature_id: str) -> None:
+    """Show every contextual decision and write a derived ledger report."""
+
+    try:
+        settings = _settings(ctx)
+        _configure(settings)
+        store = ResearchStore(settings.research_db_path)
+        evaluations = store.list_feature_evaluations(feature_id=feature_id)
+        result = write_feature_history_report(
+            store=store,
+            feature_id=feature_id,
+            reports_root=settings.reports_root,
+        )
+    except BinanceAlgoError as exc:
+        _fail(exc)
+    table = Table(title=f"feature history — {feature_id}")
+    table.add_column("type")
+    table.add_column("metric")
+    table.add_column("value", justify="right")
+    table.add_column("decision")
+    table.add_column("run")
+    for evaluation in evaluations:
+        value = "-" if evaluation.metric_value is None else f"{evaluation.metric_value:.8g}"
+        table.add_row(
+            evaluation.evaluation_type.value,
+            evaluation.metric_name,
+            value,
+            evaluation.decision.value,
+            evaluation.run_id[:16],
+        )
+    console.print(table)
+    console.print(
+        f"Evaluations: {result.evaluation_count}\n"
+        f"JSON: {result.report_json_path}\nMarkdown: {result.report_markdown_path}"
+    )
+
+
+@research_ablation_app.command("evaluate")
+def research_ablation_evaluate(ctx: typer.Context, campaign_id_or_name: str) -> None:
+    """Evaluate every preregistered ablation pair in a completed campaign."""
+
+    try:
+        settings = _settings(ctx)
+        _configure(settings)
+        store = ResearchStore(settings.research_db_path)
+        store.initialize()
+        campaign = store.get_campaign(campaign_id_or_name)
+        if campaign is None:
+            raise ResearchError(f"unknown campaign: {campaign_id_or_name}")
+        source = campaign_spec_from_stored_payload(campaign.spec_json)
+        result = AblationRunner(
+            store=store,
+            data_root=settings.data_root,
+            reports_root=settings.reports_root,
+        ).evaluate_campaign(campaign, source.ablation)
+    except (BinanceAlgoError, OSError, pl.exceptions.PolarsError) as exc:
+        _fail(exc if isinstance(exc, BinanceAlgoError) else ResearchError(str(exc)))
+    table = Table(title=f"feature ablations — {campaign.name}")
+    table.add_column("feature")
+    table.add_column("change")
+    table.add_column("delta Sharpe", justify="right")
+    table.add_column("delta return", justify="right")
+    table.add_column("decision")
+    for evaluation in result.evaluations:
+        table.add_row(
+            evaluation.feature_id,
+            evaluation.change.value,
+            f"{evaluation.metrics.delta_sharpe:.6f}",
+            f"{evaluation.metrics.delta_total_return:.6%}",
+            evaluation.decision.value,
+        )
+    console.print(table)
+    console.print(
+        f"Registry evaluations: {sum(len(item.evaluations) for item in result.evaluations)}\n"
+        f"JSON: {result.report_json_path}\nMarkdown: {result.report_markdown_path}"
+    )
 
 
 @research_experiment_app.command("list")

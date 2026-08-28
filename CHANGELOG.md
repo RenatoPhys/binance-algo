@@ -24,6 +24,10 @@
   confirmação determinística de `result_digest`; gráficos continuam opt-in.
 - Campaign YAML estrito com grid/constraints determinísticos, guard de trials, dry-run,
   multiprocessing local, falhas isoladas, resume/cache e comparison completo.
+- Feature ledger contextual e imutável, histórico por feature/hipótese e preservação de decisões
+  negativas sem alterar o lifecycle global da feature.
+- Runner de ablação com oito deltas orientados como `with feature - without feature`, regra
+  registrada, validação de artifacts e relatórios JSON/Markdown derivados.
 
 ## 0.5.0 — 2026-08-28
 
