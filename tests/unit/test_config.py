@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from decimal import Decimal
 from pathlib import Path
 
 import pytest
@@ -19,6 +20,7 @@ def test_default_configuration_is_public_data_only(monkeypatch: pytest.MonkeyPat
 
     assert settings.binance.authenticated_environment == "demo"
     assert settings.binance.rest_base_url == "https://demo-fapi.binance.com"
+    assert settings.binance.market_data_rest_base_url == "https://fapi.binance.com"
     assert settings.binance.market_ws_base_url == "wss://demo-fstream.binance.com"
     assert settings.recorder.queue_capacity == 100_000
     assert settings.streams.depth is False
@@ -26,6 +28,8 @@ def test_default_configuration_is_public_data_only(monkeypatch: pytest.MonkeyPat
     assert settings.safety.allow_order_submission is False
     assert settings.safety.max_order_notional_usdt == 0
     assert settings.credentials.configured is False
+    assert settings.research.gross_exposure == Decimal("0.50")
+    assert settings.research.fee_schedule.taker_fee_rate == Decimal("0.0005")
     assert settings.data_root == PROJECT_ROOT / "var" / "data"
 
 

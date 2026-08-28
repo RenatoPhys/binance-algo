@@ -37,6 +37,18 @@ class ExchangeInfoPayload(BaseModel):
     symbols: list[ExchangeSymbolPayload]
 
 
+class FundingRatePayload(BaseModel):
+    """Public funding event as returned by USD-M Futures."""
+
+    model_config = ConfigDict(populate_by_name=True, extra="allow")
+
+    symbol: str
+    funding_rate: str = Field(alias="fundingRate")
+    funding_time_ms: int = Field(alias="fundingTime")
+    mark_price: str | None = Field(default=None, alias="markPrice")
+    rate_type: str = Field(default="Regular", alias="rateType")
+
+
 class InstrumentMetadata(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 

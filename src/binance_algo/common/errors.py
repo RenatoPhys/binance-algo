@@ -51,3 +51,7 @@ class QueueSaturatedError(RecorderError):
 
 class ReplayError(BinanceAlgoError):
     """Recorded events cannot be replayed deterministically."""
+
+
+class ResearchError(BinanceAlgoError):
+    """A point-in-time dataset or research backtest violates its protocol."""

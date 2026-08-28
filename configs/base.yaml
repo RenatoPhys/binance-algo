@@ -7,6 +7,7 @@ binance:
   market: usdm_futures
   authenticated_environment: demo
   rest_base_url: https://demo-fapi.binance.com
+  market_data_rest_base_url: https://fapi.binance.com
   market_ws_base_url: wss://demo-fstream.binance.com
   websocket_api_url: wss://testnet.binancefuture.com/ws-fapi/v1
   recv_window_ms: 5000
@@ -64,6 +65,36 @@ recorder:
   shutdown_timeout_seconds: 30.0
   metrics_host: 127.0.0.1
   metrics_port: 9108
+
+research:
+  decision_interval_minutes: 60
+  forward_horizon_minutes: 60
+  beta_window_hours: 168
+  gross_exposure: 0.50
+  annual_volatility_target: 0.15
+  max_symbol_weight: 0.25
+  no_trade_score_band: 0.10
+  momentum_weight_1h: 0.20
+  momentum_weight_4h: 0.30
+  momentum_weight_24h: 0.50
+  spread_bps: 1.0
+  slippage_bps: 1.0
+  initial_capital_usdt: 10000
+  walk_forward_train_days: 30
+  walk_forward_test_days: 14
+  embargo_bars: 1
+  block_bootstrap_samples: 500
+  block_bootstrap_hours: 24
+  random_seed: 42
+  funding_required: true
+  fee_schedule:
+    maker_fee_rate: 0.0002
+    taker_fee_rate: 0.0005
+    effective_from: 2026-01-01
+    effective_to: null
+    source: configurable_research_assumption_verify_against_account_tier
+    account_tier: unknown
+    bnb_discount: false
 
 safety:
   live_trading: false

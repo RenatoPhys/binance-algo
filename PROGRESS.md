@@ -2,8 +2,8 @@
 
 ## Current milestone
 
-Fase 3 — dataset point-in-time e protocolo de backtest básico (planejamento; nenhum alpha
-implementado ainda).
+Fase 4 — simulador orientado a eventos (planejamento). A Fase 3 foi concluída como baseline de
+validação; o resultado negativo não foi promovido a alpha.
 
 ## Completed
 
@@ -35,13 +35,20 @@ implementado ainda).
 - [x] Catálogo DuckDB e gate de qualidade do recorder
 - [x] Replay temporal 1×/acelerado, clock injetável e determinismo por digest
 - [x] Gate real de 60 minutos da Fase 2 aprovado
+- [x] Funding histórico público com raw/Parquet/checksum e catálogo deduplicado
+- [x] Dataset point-in-time horário, features versionadas e labels no próximo open
+- [x] Auditorias contra look-ahead, backward-fill, painel incompleto e timestamps inválidos
+- [x] Baseline cross-sectional de momentum residual com limites de exposição
+- [x] Backtest vetorizado com fees, spread, slippage, funding e turnover
+- [x] Walk-forward temporal, embargo, regimes, estresses e bootstrap em blocos
+- [x] Relatório de performance/estabilidade da Fase 3 e rerun determinístico
 
 ## Pending
 
-- [ ] Especificar dataset point-in-time da Fase 3 sem leakage
-- [ ] Definir features/labels baseline antes de implementar estratégia
-- [ ] Incorporar funding e custos configuráveis ao protocolo de pesquisa
-- [ ] Implementar walk-forward e relatório de performance/estabilidade
+- [ ] Especificar eventos e invariantes contábeis do simulador da Fase 4
+- [ ] Implementar marketable limit, IOC, post-only e fills parciais
+- [ ] Modelar latência, adverse selection e markout no replay
+- [ ] Reconciliar posições, fees e funding antes de qualquer Demo Trading
 
 ## Blockers
 
@@ -53,11 +60,11 @@ implementado ainda).
 
 - `uv sync`: passed; lockfile com 59 packages
 - `uv sync --frozen`: passed; `binance-algo==0.4.0`, lockfile com 59 packages
-- `ruff format --check .`: passed; 63 files
+- `ruff format --check .`: passed; 72 files
 - `ruff check .`: passed
-- `mypy src`: passed; 33 source files
-- `pytest -m "not network"`: 51 passed, 2 deselected
-- `pytest -m network`: 2 passed, 51 deselected
+- `mypy src`: passed; 37 source files
+- `pytest -m "not network"`: 55 passed, 2 deselected
+- `pytest -m network`: 2 passed, 55 deselected
 - `binance-algo doctor`: todos os checks passaram; SQLite `journal_mode=wal`
 - `exchange-info snapshot`: 733 instrumentos persistidos
 - DuckDB: 733 linhas, 733 símbolos distintos, zero filtros tick/step ausentes
@@ -83,6 +90,16 @@ implementado ainda).
   virtuais 3.599,727s e 35,997s
 - reconnect forçado em servidor fake: passed, zero loss; cancelamento gracioso, recovery e
   quarentena também cobertos por testes
+- funding 90d: 270 eventos por símbolo, 810 na view deduplicada, zero duplicatas ou valores
+  inválidos; rerun integral retornou `skipped`
+- dataset Fase 3: versão `50f51aa076fe5426`, 5.832 linhas, 1.944 decisões horárias, painel
+  completo e zero violações temporais, duplicatas ou features nulas
+- backtest Fase 3: versão `974ab2c8643ace95`, 3 folds e 1.008 horas OOS; erro contábil zero,
+  exposição líquida média próxima de zero e participação máxima de volume de 0,0426%
+- baseline OOS: retorno de preço somado +1,527%, funding -0,046%, custos explícitos 17,348%,
+  retorno composto líquido -14,688%, max drawdown -14,711% e turnover 266,888
+- estabilidade: custos 1,5×/2× produziram -21,781%/-28,285%; atraso de uma barra -12,760%;
+  bootstrap em 500 amostras teve percentis 5/50/95 de -18,278%/-14,663%/-11,022%
 
 ## Risks and mitigations
 
@@ -98,6 +115,11 @@ implementado ainda).
   foram provados deterministicamente com servidor fake.
 - A granularidade de 30 segundos produziu 1.440 arquivos na hora. Compactação é o primeiro cuidado
   operacional antes de ampliar duração/universo.
+- O baseline apresentou rank IC médio de -0,0045 e perda em todos os regimes/estresses. Ele prova
+  o pipeline e rejeita a configuração atual; não é evidência de edge nem deve ser otimizado na
+  mesma janela.
+- O fee schedule é uma hipótese configurável com tier `unknown`, não uma consulta da conta. Todo
+  uso financeiro exige confirmar fee/tier e manter nova vigência versionada.
 
 ## Known limitations
 
@@ -109,4 +131,7 @@ implementado ainda).
 - A comparação cruzada com uma segunda fonte permanece `NOT_RUN`
 - Um único recorder deve operar por raiz de storage/state DB; não há coordenação distribuída
 - `bookTicker` não é depth nem sustenta um order book local
-- Sem compactação, backtest, estratégia, autenticação ou envio de ordens
+- O universo dinâmico continua bloqueado sem snapshots históricos de status/liquidez; o baseline
+  usa apenas o seed fixado ex ante
+- O backtest é bar/next-open e não modela fila, fill parcial, latência ou adverse selection
+- Sem estratégia promovida, simulador orientado a eventos, autenticação ou envio de ordens

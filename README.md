@@ -3,8 +3,9 @@
 Infraestrutura auditável para dados públicos da Binance USDⓈ-M Futures. O data plane atual
 implementa configuração, diagnóstico, REST público, snapshots de `exchangeInfo`, universo seed,
 state store SQLite, histórico idempotente e um recorder WebSocket resiliente com Parquet
-atômico, auditoria DuckDB e replay temporal determinístico. Não há estratégia, autenticação,
-backtest ou envio de ordens.
+atômico, auditoria DuckDB e replay temporal determinístico. A Fase 3 adiciona funding histórico,
+dataset causal e um baseline vetorizado walk-forward apenas para validação de pesquisa. Não há
+autenticação, simulador de execução, Demo Trading ou envio de ordens.
 
 ## Segurança por padrão
 
@@ -21,7 +22,8 @@ para uma fase futura, copie `.env.example` para `.env`; o arquivo local é ignor
 
 - Python 3.12 ou superior (o `uv` pode selecionar/baixar um runtime compatível)
 - [`uv`](https://docs.astral.sh/uv/)
-- Rede liberada para `https://demo-fapi.binance.com` e `https://data.binance.vision`
+- Rede liberada para `https://demo-fapi.binance.com`, `https://fapi.binance.com` e
+  `https://data.binance.vision`
 - Rede liberada para `wss://demo-fstream.binance.com` durante gravações em tempo real
 
 Docker e GNU Make são opcionais. Todos os comandos do Makefile têm um equivalente `uv` abaixo.
@@ -57,6 +59,11 @@ uv run binance-algo data audit --dataset klines \
   --start 2026-05-28 --end 2026-08-25
 uv run binance-algo recorder start --duration-seconds 3600 --metrics-port 9108
 uv run binance-algo recorder status
+uv run binance-algo --config configs/research.yaml funding sync \
+  --symbols BTCUSDT,ETHUSDT,SOLUSDT --start 2026-05-28 --end 2026-08-25
+uv run binance-algo --config configs/research.yaml research build \
+  --symbols BTCUSDT,ETHUSDT,SOLUSDT --start 2026-05-28 --end 2026-08-25
+uv run binance-algo --config configs/research.yaml research backtest
 ```
 
 Durante o recorder, consulte `http://127.0.0.1:9108/health/live`, `/health/ready` e `/metrics`.
@@ -97,6 +104,10 @@ var/data/raw_archives/binance/usdm/klines/<symbol>/1m/*.CHECKSUM
 var/data/raw_archives/binance/usdm/klines/<symbol>/1m/extracted/*.csv
 var/data/bronze/binance/usdm/klines/date=YYYY-MM-DD/symbol=<symbol>/*.parquet
 var/data/raw/binance/usdm/<stream>/date=YYYY-MM-DD/hour=HH/symbol=<symbol>/*.parquet
+var/data/raw/binance/usdm/funding_rates/symbol=<symbol>/*.json
+var/data/bronze/binance/usdm/funding_rates/symbol=<symbol>/*.parquet
+var/data/gold/binance/usdm/research_dataset/version=<hash>/*
+var/data/gold/binance/usdm/research_backtest/version=<hash>/*
 var/data/quarantine/recorder_recovery/<timestamp>/*
 var/state/ingestion.sqlite3
 var/state/market_data.duckdb
@@ -104,6 +115,7 @@ var/reports/downloads_*.{json,md}
 var/reports/normalization_*.{json,md}
 var/reports/data_quality_*.{json,md}
 var/reports/recorder_*.{json,md}
+var/reports/research_phase3_*.{json,md}
 ```
 
 Raw e bronze são imutáveis. A escrita passa por arquivo temporário, `fsync`, leitura de validação
@@ -132,6 +144,20 @@ As views DuckDB `realtime_book_ticker`, `realtime_aggregate_trades`, `realtime_m
 Execute apenas um recorder por raiz de storage/state DB. Processos concorrentes para os mesmos
 streams produziriam observações duplicadas e disputariam o checkpoint; coordenação distribuída
 fica fora deste marco.
+
+## Research baseline
+
+O comando `funding sync` usa somente o endpoint público de market data e preserva raw JSON,
+Parquet canônico, checksum e manifesto. A view DuckDB `funding_rates` deduplica revisões pela
+chave `symbol + funding_time_ms + rate_type`. O rerun de conteúdo idêntico é `skipped`.
+
+`research build` aceita somente klines fechadas, exige grid 1m idêntico entre os três símbolos e
+produz uma linha por símbolo/hora. Features terminam no cutoff; entrada e labels começam no
+próximo open. `research backtest` usa somente splits temporais, fecha cada fold flat e gera os
+estresses descritos em [docs/research_protocol.md](docs/research_protocol.md).
+
+O baseline é um teste end-to-end, não uma recomendação. Na janela validada de 90 dias ele foi
+negativo depois dos custos, e essa evidência foi preservada sem otimização retrospectiva.
 
 ## Configuração
 
@@ -166,6 +192,6 @@ O volume `./var` preserva datasets locais. A imagem fixa as duas flags de segura
 
 ## Próximo marco
 
-Somente depois do gate de 60 minutos do recorder: definir uma hipótese de research, protocolo de
-backtest e critérios contra leakage. Depth local, alpha e execução permanecem fora de escopo até
-seus respectivos gates; `LIVE_TRADING` e envio de ordens continuam impossíveis por configuração.
+A Fase 4 é o simulador orientado a eventos: replay, latência, marketable limit/IOC/post-only,
+fills parciais, fees e funding com invariantes de conta. Demo Trading, alpha promovido e live
+permanecem fora de escopo; `LIVE_TRADING` e envio de ordens continuam impossíveis por configuração.

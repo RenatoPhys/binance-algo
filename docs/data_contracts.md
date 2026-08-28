@@ -109,3 +109,32 @@ commit durável.
 O gate considera gap de `aggregate_trade_id`, regressões de trade/update ID, invariantes de
 preço/volume, schema, checksum, duplicatas globais e igualdade mensagens/linhas. `bookTicker` não
 é tratado como diff-depth e não sustenta um order book local.
+
+## funding_rates — schema version 1
+
+Chave lógica: `symbol + funding_time_ms + rate_type`.
+
+| Campo | Semântica |
+|---|---|
+| `funding_rate_str`, `funding_rate` | valor exato recebido e representação analítica |
+| `funding_time_ms` | timestamp efetivo do evento no venue |
+| `mark_price_str`, `mark_price` | mark associado, quando retornado |
+| `rate_type` | `Regular`, `Special` ou novo valor preservado do upstream |
+| `ingested_at_ns` | observação local da primeira persistência daquele conteúdo |
+| `source`, `schema_version` | `binance_public_rest`, `1` |
+
+O raw JSON canônico é imutável e nomeado pelo checksum. Ranges sobrepostos podem criar revisões;
+a view DuckDB seleciona a observação mais recente por chave. Eventos simultâneos de tipos
+distintos são somados na contabilidade.
+
+## research_dataset — schema version 1
+
+Chave: `decision_time_ms + symbol`. O painel contém os três símbolos em todo timestamp aceito.
+Campos `feature_*` e features nomeadas usam somente fontes até a decisão. `execution_time_ms` é o
+próximo open e `label_end_time_ms` ocorre 60 minutos depois. `future_*` e `outcome_*` são labels ou
+resultados e nunca entram no score. `feature_version`, `universe_version` e `dataset_version`
+identificam contratos e conteúdo.
+
+O manifesto inclui definições das features, semântica do label, configuração completa e auditoria
+de duplicatas, nulos e desigualdades temporais. Consulte `docs/research_protocol.md` para o
+protocolo integral.

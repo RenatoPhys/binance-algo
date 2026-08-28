@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+from datetime import date
 from decimal import Decimal
 from pathlib import Path
 from typing import Any, Literal, Self
@@ -31,6 +32,7 @@ class BinanceConfig(StrictModel):
     market: Literal["usdm_futures"] = "usdm_futures"
     authenticated_environment: Literal["demo"] = "demo"
     rest_base_url: str = "https://demo-fapi.binance.com"
+    market_data_rest_base_url: str = "https://fapi.binance.com"
     market_ws_base_url: str = "wss://demo-fstream.binance.com"
     websocket_api_url: str = "wss://testnet.binancefuture.com/ws-fapi/v1"
     recv_window_ms: int = Field(default=5_000, ge=1_000, le=60_000)
@@ -45,6 +47,9 @@ class BinanceConfig(StrictModel):
         self.rest_base_url = self.rest_base_url.rstrip("/")
         if not self.rest_base_url.startswith("https://"):
             raise ValueError("binance.rest_base_url must use HTTPS")
+        self.market_data_rest_base_url = self.market_data_rest_base_url.rstrip("/")
+        if not self.market_data_rest_base_url.startswith("https://"):
+            raise ValueError("binance.market_data_rest_base_url must use HTTPS")
         self.market_ws_base_url = self.market_ws_base_url.rstrip("/")
         if not self.market_ws_base_url.startswith("wss://"):
             raise ValueError("binance.market_ws_base_url must use WSS")
@@ -132,6 +137,59 @@ class RecorderConfig(StrictModel):
     metrics_port: int = Field(default=9108, ge=0, le=65_535)
 
 
+class FeeScheduleConfig(StrictModel):
+    """Versioned research assumption; never inferred from the current account."""
+
+    maker_fee_rate: Decimal = Field(ge=0, le=Decimal("0.01"))
+    taker_fee_rate: Decimal = Field(ge=0, le=Decimal("0.01"))
+    effective_from: date
+    effective_to: date | None = None
+    source: str = Field(min_length=1)
+    account_tier: str = Field(min_length=1)
+    bnb_discount: bool = False
+
+    @model_validator(mode="after")
+    def validate_effective_range(self) -> Self:
+        if self.effective_to is not None and self.effective_to < self.effective_from:
+            raise ValueError("fee_schedule.effective_to must not precede effective_from")
+        return self
+
+
+class ResearchConfig(StrictModel):
+    """Causal baseline and validation protocol for Phase 3."""
+
+    decision_interval_minutes: Literal[60] = 60
+    forward_horizon_minutes: Literal[60] = 60
+    beta_window_hours: int = Field(default=168, ge=24, le=720)
+    gross_exposure: Decimal = Field(default=Decimal("0.50"), gt=0, le=1)
+    annual_volatility_target: Decimal = Field(default=Decimal("0.15"), gt=0, le=1)
+    max_symbol_weight: Decimal = Field(default=Decimal("0.25"), gt=0, le=1)
+    no_trade_score_band: Decimal = Field(default=Decimal("0.10"), ge=0, le=5)
+    momentum_weight_1h: Decimal = Field(default=Decimal("0.20"), ge=0, le=1)
+    momentum_weight_4h: Decimal = Field(default=Decimal("0.30"), ge=0, le=1)
+    momentum_weight_24h: Decimal = Field(default=Decimal("0.50"), ge=0, le=1)
+    spread_bps: Decimal = Field(default=Decimal("1.0"), ge=0, le=100)
+    slippage_bps: Decimal = Field(default=Decimal("1.0"), ge=0, le=100)
+    initial_capital_usdt: Decimal = Field(default=Decimal("10000"), gt=0)
+    walk_forward_train_days: int = Field(default=30, ge=7, le=3650)
+    walk_forward_test_days: int = Field(default=14, ge=1, le=365)
+    embargo_bars: int = Field(default=1, ge=1, le=24)
+    block_bootstrap_samples: int = Field(default=500, ge=100, le=10_000)
+    block_bootstrap_hours: int = Field(default=24, ge=2, le=720)
+    random_seed: int = 42
+    funding_required: bool = True
+    fee_schedule: FeeScheduleConfig
+
+    @model_validator(mode="after")
+    def validate_research_protocol(self) -> Self:
+        weight_sum = self.momentum_weight_1h + self.momentum_weight_4h + self.momentum_weight_24h
+        if weight_sum != Decimal("1"):
+            raise ValueError("research momentum weights must sum exactly to 1")
+        if self.max_symbol_weight * 2 < self.gross_exposure / Decimal("3"):
+            raise ValueError("research.max_symbol_weight is too small for the target exposure")
+        return self
+
+
 class SafetyConfig(StrictModel):
     live_trading: bool = False
     allow_order_submission: bool = False
@@ -170,6 +228,7 @@ class Settings(StrictModel):
     universe: UniverseConfig
     streams: StreamsConfig
     recorder: RecorderConfig
+    research: ResearchConfig
     safety: SafetyConfig
     credentials: Credentials = Field(default_factory=Credentials)
     _project_root: Path = PrivateAttr(default_factory=Path.cwd)

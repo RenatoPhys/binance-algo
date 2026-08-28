@@ -1,11 +1,12 @@
 # Referências oficiais
 
-Consultadas em 2026-08-27.
+Consultadas em 2026-08-28.
 
 - [Informações gerais de USDⓈ-M Futures](https://developers.binance.com/docs/derivatives/usds-margined-futures/general-info)
 - [Test Connectivity — GET /fapi/v1/ping](https://developers.binance.com/docs/derivatives/usds-margined-futures/market-data/rest-api/Test-Connectivity)
 - [Check Server Time — GET /fapi/v1/time](https://developers.binance.com/docs/derivatives/usds-margined-futures/market-data/rest-api/Check-Server-Time)
 - [Exchange Information — GET /fapi/v1/exchangeInfo](https://developers.binance.com/docs/derivatives/usds-margined-futures/market-data/rest-api/Exchange-Information)
+- [Funding Rate History — GET /fapi/v1/fundingRate](https://developers.binance.com/docs/derivatives/usds-margined-futures/market-data/rest-api/Get-Funding-Rate-History)
 - [Códigos de erro USDⓈ-M](https://developers.binance.com/docs/derivatives/usds-margined-futures/error-code)
 - [Changelog de Derivatives](https://developers.binance.com/docs/derivatives/change-log)
 - [Conexão aos market streams USDⓈ-M](https://developers.binance.com/en/docs/products/derivatives-trading-usds-futures/websocket-market-streams/Connect)
@@ -30,3 +31,7 @@ O repositório `binance/binance-public-data` foi revisado novamente em 2026-08-2
 arquivos daily/monthly, publicação diária no dia seguinte, schema de USD-M klines e `.CHECKSUM`
 SHA-256. URLs daily e monthly de BTCUSDT 1m foram verificadas no serviço oficial; o contract test
 usa o arquivo daily de 2026-08-25.
+
+O endpoint público de funding foi revisado em 2026-08-28. Ele aceita símbolo, range inclusivo e
+até 1.000 itens; o retorno cronológico contém `fundingRate`, `fundingTime`, mark price e tipo. A
+ingestão usa o host público de produção apenas para dados, sem API key ou endpoints de ordem.

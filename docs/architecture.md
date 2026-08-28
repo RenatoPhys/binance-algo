@@ -76,3 +76,23 @@ run não entram no hash. Isso torna duplicatas de transporte detectáveis sem ap
 O replay faz `UNION ALL BY NAME` apenas dos paths `VALIDATED` selecionados no SQLite e ordena por
 `event_time_ms`, `received_time_ns`, `event_id` e tipo. O clock é uma interface injetável e o
 motor não importa nem chama nenhum cliente de rede.
+
+O research plane da Fase 3 é separado do recorder:
+
+```text
+klines fechadas ----+                         +-> labels no próximo open
+                    +-> painel causal horário +-> score residual cross-sectional
+funding REST --------+                         +-> walk-forward vetorizado
+                                                          |
+                                                          v
+                                  preço + funding - fee - spread - slippage
+                                                          |
+                                                          v
+                              estresses + bootstrap + relatório versionado
+```
+
+O universo é o seed fixo da especificação, não a lista atual ranqueada por liquidez. O builder
+exige grid comum, não preenche o passado e elimina o timestamp inteiro quando qualquer símbolo
+não possui lookback causal. O backtest não importa adapters Binance, não acessa rede e não produz
+ordens. O modelo next-open serve para triagem; fills parciais, fila, latência e estado de conta
+serão responsabilidades do motor orientado a eventos.

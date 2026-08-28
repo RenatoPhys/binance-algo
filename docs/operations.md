@@ -64,6 +64,28 @@ uv run binance-algo replay --dataset all --start <epoch-ms> --end <epoch-ms> --s
 O modo virtual não acessa rede nem espera tempo real. Use `--wall-clock` de modo intencional: em
 1×, um range de 60 minutos leva aproximadamente 60 minutos para ser entregue ao consumidor.
 
+## Dataset e backtest de pesquisa
+
+Depois dos gates histórico e do recorder, execute:
+
+```bash
+uv run binance-algo --config configs/research.yaml funding sync \
+  --symbols BTCUSDT,ETHUSDT,SOLUSDT --start 2026-05-28 --end 2026-08-25
+uv run binance-algo --config configs/research.yaml research build \
+  --symbols BTCUSDT,ETHUSDT,SOLUSDT --start 2026-05-28 --end 2026-08-25
+uv run binance-algo --config configs/research.yaml research backtest
+```
+
+O primeiro comando acessa apenas `/fapi/v1/fundingRate`, valida símbolo/range/tipos e recria a
+view `funding_rates`. O segundo falha diante de candle aberto, grid divergente, falta de funding,
+timestamp causal inválido, painel incompleto, duplicata ou feature nula. O terceiro usa o dataset
+mais recente por padrão; passe `--dataset <path>` para fixar uma versão explicitamente.
+
+Antes de interpretar o relatório, confira `accounting_error_max=0`, decomposição de custos,
+turnover e estresses. Resultado líquido positivo não promove estratégia; resultado negativo não
+autoriza tuning na mesma janela. Preserve o JSON e avance qualquer nova hipótese como versão
+distinta de feature/configuração.
+
 ## Falhas conhecidas e resposta
 
 - DNS/rede indisponível: o cliente encerra após retries limitados e informa o endpoint.
@@ -84,6 +106,10 @@ O modo virtual não acessa rede nem espera tempo real. Use `--wall-clock` de mod
 - Crash depois do rename e antes do manifesto: o restart valida e promove o arquivo em voo.
 - `.tmp` residual ou Parquet órfão inválido: move a evidência para `recorder_recovery`.
 - Gate do recorder falhou: preserve JSON/Markdown e não avance para research/estratégia.
+- Funding ausente/divergente: preserve o raw e não substitua por zero ou backward-fill.
+- Dataset point-in-time falhou: não execute o backtest sobre uma versão parcial.
+- Fee schedule fora da validade: atualize a hipótese versionada com fonte, não prolongue datas
+  silenciosamente.
 
 Arquivos `.tmp` pertencem somente a uma tentativa atômica. `.part` pertence a um download
 retomável. Não remova manualmente os arquivos nem edite o SQLite durante uma ingestão.

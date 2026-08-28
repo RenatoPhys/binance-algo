@@ -38,6 +38,21 @@ async def test_public_endpoints_and_rate_limit_headers() -> None:
             return web.json_response({"serverTime": 1_787_873_855_926})
         if request.path == "/fapi/v1/exchangeInfo":
             return web.json_response({"serverTime": 1_787_873_855_926, "symbols": []})
+        if request.path == "/fapi/v1/fundingRate":
+            assert request.query["symbol"] == "BTCUSDT"
+            assert request.query["startTime"] == "100"
+            assert request.query["endTime"] == "200"
+            return web.json_response(
+                [
+                    {
+                        "symbol": "BTCUSDT",
+                        "fundingRate": "0.00010000",
+                        "fundingTime": 150,
+                        "markPrice": "50000.0",
+                        "rateType": "Regular",
+                    }
+                ]
+            )
         raise web.HTTPNotFound()
 
     metrics = RecorderMetrics(queue_capacity=1)
@@ -49,6 +64,11 @@ async def test_public_endpoints_and_rate_limit_headers() -> None:
         assert client.last_rate_limits == {"x-mbx-used-weight-1m": "1"}
         assert await client.server_time() == 1_787_873_855_926
         assert (await client.exchange_info())["symbols"] == []
+        funding = await client.funding_rate_history(
+            symbol="BTCUSDT", start_time_ms=100, end_time_ms=200
+        )
+        assert funding[0].funding_time_ms == 150
+        assert funding[0].funding_rate == "0.00010000"
 
     samples = generate_latest(metrics.registry).decode("utf-8")
     assert 'binance_rest_requests_total{path="/fapi/v1/ping",status="200"} 1.0' in samples

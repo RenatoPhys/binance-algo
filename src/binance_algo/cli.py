@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Annotated, NoReturn
 
 import orjson
+import polars as pl
 import typer
 from rich.console import Console
 from rich.table import Table
@@ -30,6 +31,12 @@ from binance_algo.data.backfill import (
     write_download_report,
 )
 from binance_algo.data.catalog import rebuild_kline_catalog
+from binance_algo.data.funding import (
+    FundingCatalogResult,
+    FundingSyncResult,
+    rebuild_funding_catalog,
+    sync_funding_history,
+)
 from binance_algo.data.manifest import (
     BackfillJobRecord,
     BackfillJobStatus,
@@ -63,6 +70,8 @@ from binance_algo.doctor import run_doctor
 from binance_algo.exchange.binance_usdm.rest import BinanceUSDMRestClient
 from binance_algo.logging import configure_logging, get_logger
 from binance_algo.observability.metrics import RecorderMetrics
+from binance_algo.research.backtest import run_and_persist_backtest
+from binance_algo.research.dataset import build_and_persist_research_dataset
 
 app = typer.Typer(help="Auditable Binance USD-M Futures public-data foundation.")
 exchange_info_app = typer.Typer(help="Snapshot and inspect exchange metadata.")
@@ -70,11 +79,15 @@ universe_app = typer.Typer(help="Build point-in-time research universes.")
 backfill_app = typer.Typer(help="Download official historical public archives.")
 data_app = typer.Typer(help="Normalize, catalog, and audit canonical market data.")
 recorder_app = typer.Typer(help="Record resilient public market streams to Parquet.")
+funding_app = typer.Typer(help="Ingest public historical funding events.")
+research_app = typer.Typer(help="Build causal datasets and run the Phase 3 baseline.")
 app.add_typer(exchange_info_app, name="exchange-info")
 app.add_typer(universe_app, name="universe")
 app.add_typer(backfill_app, name="backfill")
 app.add_typer(data_app, name="data")
 app.add_typer(recorder_app, name="recorder")
+app.add_typer(funding_app, name="funding")
+app.add_typer(research_app, name="research")
 console = Console()
 
 
@@ -365,6 +378,80 @@ def _date_range_ms(start: str, end: str) -> tuple[int, int]:
     return start_ms, end_ms
 
 
+async def _sync_funding_range(
+    settings: Settings,
+    *,
+    symbols: tuple[str, ...],
+    start_time_ms: int,
+    end_time_ms: int,
+) -> tuple[list[FundingSyncResult], FundingCatalogResult]:
+    state_store = StateStore(settings.state_db_path)
+    state_store.initialize()
+    async with BinanceUSDMRestClient(
+        base_url=settings.binance.market_data_rest_base_url,
+        timeout_seconds=settings.binance.request_timeout_seconds,
+        max_attempts=settings.binance.retry_max_attempts,
+        retry_base_seconds=settings.binance.retry_base_seconds,
+    ) as client:
+        results = await sync_funding_history(
+            source=client,
+            storage=LocalFilesystemStorage(settings.data_root),
+            state_store=state_store,
+            symbols=symbols,
+            start_time_ms=start_time_ms,
+            end_time_ms=end_time_ms,
+            compression=settings.storage.parquet_compression,
+        )
+    records = state_store.list_data_files(
+        logical_dataset="funding_rates",
+        layer="bronze",
+        statuses={DataFileStatus.NORMALIZED},
+        symbols=symbols,
+    )
+    catalog = rebuild_funding_catalog(database_path=settings.duckdb_path, records=records)
+    return results, catalog
+
+
+@funding_app.command("sync")
+def funding_sync(
+    ctx: typer.Context,
+    start: Annotated[str, typer.Option(help="Inclusive UTC start date as YYYY-MM-DD.")],
+    end: Annotated[str, typer.Option(help="Inclusive UTC end date as YYYY-MM-DD.")],
+    symbols: Annotated[str, typer.Option(help="Comma-separated USD-M symbols.")] = (
+        "BTCUSDT,ETHUSDT,SOLUSDT"
+    ),
+) -> None:
+    """Persist public funding history and rebuild its deduplicated DuckDB view."""
+
+    try:
+        settings = _settings(ctx)
+        _configure(settings)
+        parsed_symbols = parse_symbols(symbols)
+        start_ms, end_ms = _date_range_ms(start, end)
+        results, catalog = asyncio.run(
+            _sync_funding_range(
+                settings,
+                symbols=parsed_symbols,
+                start_time_ms=start_ms,
+                end_time_ms=end_ms,
+            )
+        )
+    except BinanceAlgoError as exc:
+        _fail(exc)
+    table = Table(title="funding history: PASS")
+    table.add_column("symbol")
+    table.add_column("rows", justify="right")
+    table.add_column("outcome")
+    for result in results:
+        table.add_row(
+            result.symbol,
+            str(result.row_count),
+            "skipped" if result.skipped else "persisted",
+        )
+    console.print(table)
+    console.print(f"DuckDB: {catalog.database_path} ({catalog.row_count} deduplicated events)")
+
+
 @data_app.command("normalize")
 def data_normalize(
     ctx: typer.Context,
@@ -498,6 +585,110 @@ def data_audit(
     console.print(f"Reports: {json_report}\n         {markdown_report}")
     if not report.passed:
         raise typer.Exit(code=1)
+
+
+@research_app.command("build")
+def research_build(
+    ctx: typer.Context,
+    start: Annotated[str, typer.Option(help="Inclusive UTC input start as YYYY-MM-DD.")],
+    end: Annotated[str, typer.Option(help="Inclusive UTC input end as YYYY-MM-DD.")],
+    symbols: Annotated[str, typer.Option(help="Comma-separated fixed seed symbols.")] = (
+        "BTCUSDT,ETHUSDT,SOLUSDT"
+    ),
+) -> None:
+    """Build and audit the causal point-in-time research dataset."""
+
+    try:
+        settings = _settings(ctx)
+        _configure(settings)
+        parsed_symbols = parse_symbols(symbols)
+        start_ms, end_ms = _date_range_ms(start, end)
+        result = build_and_persist_research_dataset(
+            database_path=settings.duckdb_path,
+            storage=LocalFilesystemStorage(settings.data_root),
+            symbols=parsed_symbols,
+            start_time_ms=start_ms,
+            end_time_ms=end_ms,
+            config=settings.research,
+            compression=settings.storage.parquet_compression,
+        )
+    except BinanceAlgoError as exc:
+        _fail(exc)
+    audit = result.audit
+    console.print(
+        f"Point-in-time dataset PASS: {audit.row_count} rows, "
+        f"{audit.decision_count} decisions\n"
+        f"Dataset version: {result.dataset_version}\n"
+        f"Universe / features: {result.universe_version} / {result.feature_version}\n"
+        f"Parquet: {result.parquet_path}\nManifest: {result.manifest_path}"
+    )
+
+
+def _latest_research_dataset(data_root: Path) -> Path:
+    candidates = sorted(
+        data_root.glob("gold/binance/usdm/research_dataset/version=*/dataset.parquet"),
+        key=lambda path: path.stat().st_mtime_ns,
+    )
+    if not candidates:
+        raise DataQualityError(
+            "no research dataset exists; run `binance-algo research build` first"
+        )
+    return candidates[-1]
+
+
+@research_app.command("backtest")
+def research_backtest(
+    ctx: typer.Context,
+    dataset: Annotated[
+        Path | None,
+        typer.Option(help="Point-in-time dataset Parquet; defaults to the latest local version."),
+    ] = None,
+) -> None:
+    """Run expanding walk-forward research and all Phase 3 stability scenarios."""
+
+    try:
+        settings = _settings(ctx)
+        _configure(settings)
+        dataset_path = (
+            dataset.resolve()
+            if dataset is not None
+            else _latest_research_dataset(settings.data_root)
+        )
+        if not dataset_path.is_file():
+            raise DataQualityError(f"research dataset does not exist: {dataset_path}")
+        result = run_and_persist_backtest(
+            dataset_path=dataset_path,
+            storage=LocalFilesystemStorage(settings.data_root),
+            reports_root=settings.reports_root,
+            compression=settings.storage.parquet_compression,
+            config=settings.research,
+        )
+    except (BinanceAlgoError, OSError, pl.exceptions.PolarsError) as exc:
+        if isinstance(exc, BinanceAlgoError):
+            _fail(exc)
+        _fail(DataQualityError(str(exc)))
+    metrics = result.metrics
+    table = Table(title="Phase 3 walk-forward baseline")
+    table.add_column("metric")
+    table.add_column("out-of-sample", justify="right")
+    for name, value in (
+        ("folds", str(result.fold_count)),
+        ("periods", str(metrics.periods)),
+        ("total return", f"{metrics.total_return:.4%}"),
+        ("Sharpe", f"{metrics.sharpe:.3f}"),
+        ("max drawdown", f"{metrics.max_drawdown:.4%}"),
+        ("turnover", f"{metrics.turnover:.3f}"),
+        ("funding P&L", f"{metrics.funding_pnl:.6f}"),
+        ("accounting error", f"{metrics.accounting_error_max:.3e}"),
+    ):
+        table.add_row(name, value)
+    console.print(table)
+    console.print(
+        "Baseline only; no claim of edge.\n"
+        f"Run version: {result.run_version}\n"
+        f"Curve: {result.curve_path}\n"
+        f"Reports: {result.report_json_path}\n         {result.report_markdown_path}"
+    )
 
 
 async def _run_recorder_with_clock(
