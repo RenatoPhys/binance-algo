@@ -1,0 +1,64 @@
+campaign:
+  name: buffered_sma_trend_v1_oos_2y_discovery
+  description: >-
+    Preregistered low-turnover screen for the fixed 12-hour versus 72-hour SMA crossover. The
+    first 1,435 days form the initial expanding training window and the final 728 complete days
+    are reported OOS. Portfolio weights change only at causal scheduled rebalance times.
+  hypothesis_id: HYP-BUFFERED-SMA-TREND-0001
+  artifact_policy: summary
+  max_trials: 8
+
+dataset:
+  manifest: latest
+
+feature_set:
+  name: phase3_baseline_features
+  version: "1"
+
+label:
+  name: gross_forward_return_1h
+  version: "1"
+  horizon_minutes: 60
+
+strategy:
+  name: sma_crossover
+  version: "1"
+  fixed:
+    fast_window_hours: 12
+    slow_window_hours: 72
+
+portfolio:
+  name: buffered_neutral_long_short
+  version: "1"
+  fixed:
+    gross_exposure: 0.50
+    annual_volatility_target: 0.15
+    max_symbol_weight: 0.25
+  grid:
+    rebalance_interval_hours: [6, 12, 24, 48]
+    no_trade_score_band: [0.50, 1.00]
+
+execution:
+  name: bar_next_open
+  version: "1"
+  fixed: {}
+
+costs:
+  name: configured_taker
+  version: "1"
+  fixed:
+    cost_multiplier: 1.0
+
+validation:
+  profile: discovery
+  split_plan: expanding_walk_forward_v1
+  train_days: 1435
+  test_days: 14
+  embargo_bars: 1
+  stress_cost_multipliers: [1.5]
+  stress_signal_delay_bars: [1]
+
+runner:
+  max_workers: 4
+  fail_fast: false
+  resume: true

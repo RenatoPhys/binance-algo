@@ -10,9 +10,12 @@ from binance_algo.common.errors import ResearchError
 from binance_algo.research.contracts import FoldContext, TrainingDataset, select_feature_view
 from binance_algo.research.panel import PanelData
 from binance_algo.research.portfolio.neutral_long_short import (
+    BufferedNeutralLongShortParameters,
+    BufferedNeutralLongShortPolicy,
     NeutralLongShortParameters,
     NeutralLongShortPolicy,
 )
+from binance_algo.research.portfolio.registry import build_portfolio_policy
 from binance_algo.research.strategies.funding_carry import FUNDING_CARRY_FEATURES
 from binance_algo.research.strategies.registry import build_strategy
 from binance_algo.research.strategies.residual_mean_reversion import (
@@ -318,6 +321,47 @@ def test_neutral_long_short_fails_on_degenerate_scores_or_misaligned_state() -> 
         _policy().target_weights(degenerate, market_state, context=_context())
     with pytest.raises(ResearchError, match="keys must align exactly"):
         _policy().target_weights(scores, market_state.head(5), context=_context())
+
+
+def test_buffered_neutral_long_short_holds_weights_between_rebalances() -> None:
+    scores, market_state = _portfolio_inputs()
+    policy = BufferedNeutralLongShortPolicy(
+        BufferedNeutralLongShortParameters(
+            no_trade_score_band=0.0,
+            rebalance_interval_hours=2,
+            gross_exposure=0.5,
+            annual_volatility_target=0.15,
+            max_symbol_weight=0.25,
+        )
+    )
+
+    targets = policy.target_weights(scores, market_state, context=_context())
+    first = targets.filter(pl.col("decision_time_ms") == 3_000).sort("symbol")
+    second = targets.filter(pl.col("decision_time_ms") == 4_000).sort("symbol")
+
+    assert first["target_weight"].to_list() == second["target_weight"].to_list()
+    assert first.filter(pl.col("symbol") == "BTCUSDT")["target_weight"].item() > 0
+
+
+def test_buffered_neutral_long_short_factory_is_strict() -> None:
+    parameters = {
+        "no_trade_score_band": 0.5,
+        "rebalance_interval_hours": 12,
+        "gross_exposure": 0.5,
+        "annual_volatility_target": 0.15,
+        "max_symbol_weight": 0.25,
+    }
+
+    policy = build_portfolio_policy("buffered_neutral_long_short", "v1", parameters)
+
+    assert policy.policy_id == "buffered_neutral_long_short"
+    assert policy.parameters.rebalance_interval_hours == 12
+    with pytest.raises(ResearchError, match="extra_forbidden"):
+        build_portfolio_policy(
+            "buffered_neutral_long_short",
+            "1",
+            {**parameters, "future_leak": True},
+        )
 
 
 @pytest.mark.parametrize(

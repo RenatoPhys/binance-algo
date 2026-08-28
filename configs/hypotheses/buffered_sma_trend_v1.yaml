@@ -1,0 +1,23 @@
+hypothesis_id: HYP-BUFFERED-SMA-TREND-0001
+title: Buffered slow SMA trend may survive explicit trading costs
+mechanism: >-
+  The 12-hour versus 72-hour cross-sectional SMA signal produced positive gross P&L but excessive
+  turnover under hourly risk resizing. Holding risk-controlled, net-neutral weights for a fixed
+  minimum interval and requiring a material score improvement before replacing either tail may
+  retain slower trend information while reducing fees, spread and slippage.
+expected_direction: long the stronger slow crossover and short the weaker crossover
+expected_horizon: 6h to 48h holding intervals with hourly mark-to-market
+target_universe: fixed point-in-time BTCUSDT, ETHUSDT and SOLUSDT research universe
+preregistered_success_criteria:
+  purpose: discovery_only
+  oos_days: 728
+  net_total_return_min: "0.0"
+  net_sharpe_min: "0.5"
+  cost_1_5x_total_return_min: "0.0"
+  profitable_fold_fraction_min: "0.55"
+  promotion_allowed: false
+status: READY
+notes: >-
+  The strategy parameters are fixed from the prior benchmark. Only the causal rebalance interval
+  and hysteresis band are screened. Every result, including failures, remains exploratory and does
+  not authorize trading or promotion.
