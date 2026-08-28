@@ -138,3 +138,38 @@ identificam contratos e conteúdo.
 O manifesto inclui definições das features, semântica do label, configuração completa e auditoria
 de duplicatas, nulos e desigualdades temporais. Consulte `docs/research_protocol.md` para o
 protocolo integral.
+
+## Research component contracts — Fase 3.5 contract version 1
+
+A feature view tem chave lógica `decision_time_ms + symbol`. Ela contém somente essas duas chaves
+e a lista explícita retornada por `Strategy.required_features()`. Nomes vazios, repetidos, chaves
+declaradas como features e prefixos `future_`, `outcome_` ou `label_` são inválidos. A projeção
+falha diante de coluna ausente, chave nula ou duplicada.
+
+`TrainingDataset.features` obedece ao mesmo contrato. O dataframe opcional `target` é separado,
+possui ao menos uma coluna de target além das chaves e deve ter exatamente a mesma sequência de
+chaves das features.
+
+`StrategyScores.frame` tem no mínimo:
+
+| Campo | Semântica |
+|---|---|
+| `decision_time_ms` | decisão causal que originou o score |
+| `symbol` | contrato avaliado |
+| `score` | valor numérico, finito e não nulo |
+
+A chave é única. Campos opcionais futuros podem incluir `score_raw`, `score_rank`,
+`score_confidence` e `strategy_state_json`, sem transformar outcomes em inputs.
+
+`PortfolioPolicy.target_weights` recebe scores e uma market-state view separada, alinhadas
+exatamente pela chave. A implementação neutral long/short v1 exige `rolling_beta` e
+`realized_volatility_24h` e produz:
+
+| Campo | Semântica |
+|---|---|
+| `decision_time_ms` | decisão correspondente ao score |
+| `symbol` | contrato do peso-alvo |
+| `target_weight` | fração do capital, finita, antes de custos e outcomes |
+
+O painel de pesos precisa cobrir as mesmas decisões/símbolos do teste. O engine pode atrasar o
+painel para stress de sinal, mas não permite que a política leia `future_*` ou `outcome_*`.

@@ -1,5 +1,17 @@
 # Changelog
 
+## Unreleased — Fase 3.5 PR 1
+
+- Golden snapshot sintético e registro dos checksums do baseline real da Fase 3.
+- Contratos tipados para strategy/fitted strategy, portfolio policy e contexto walk-forward.
+- Feature view por allowlist, separação de targets e bloqueio de `future_*`/`outcome_*`/`label_*`.
+- ADRs da plataforma/identidade e da separação entre estratégia, features e portfólio.
+- Residual momentum e neutral long/short extraídos para módulos versionados e testáveis.
+- Walk-forward genérico executando `fit` no treino, `score` no teste e política de portfólio
+  separada.
+- CLI legada migrada para o adaptador do novo engine, com golden sintético e artifacts reais
+  byte a byte idênticos.
+
 ## 0.5.0 — 2026-08-28
 
 - Funding histórico público com raw imutável, Parquet canônico, manifesto e view DuckDB.

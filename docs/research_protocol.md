@@ -28,6 +28,12 @@ usa no-trade band, long no topo e short na cauda. Pesos são projetados para neu
 beta quando a geometria de três símbolos permite, limitados por símbolo e escalados por
 volatilidade. `gross_exposure=0.50` é o teto inicial; alavancagem econômica é rejeitada.
 
+Na Fase 3.5, essa semântica está separada em `ResidualMomentumStrategy:v1` e
+`NeutralLongShortPolicy:v1`. Para cada outer fold, o engine projeta apenas as features declaradas
+no intervalo de treino, chama `fit`, congela o resultado e pontua somente o teste. A estratégia
+fixa valida o treino, mas não calibra nenhum parâmetro. Labels/outcomes não entram no score; a
+política recebe apenas scores, beta e volatilidade realizada.
+
 ## Custos e validação
 
 Cada rebalanceamento contabiliza turnover de uma via e usa taker fee, meio spread e slippage do
@@ -45,4 +51,3 @@ barra, duas perturbações de pesos e bootstrap determinístico em blocos de 24 
 
 O resultado real de 90 dias é deliberadamente mantido mesmo sendo negativo. Ele valida que custos
 podem rejeitar a hipótese e não deve ser interpretado como previsão, recomendação ou edge.
-

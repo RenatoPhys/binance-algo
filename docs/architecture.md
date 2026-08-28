@@ -48,8 +48,9 @@ A auditoria valida schema, checksum, nulidade, ordem, unicidade, alinhamento tem
 continuidade e invariantes de mercado por arquivo e no range agregado. A view DuckDB é recriada a
 partir da lista explícita de arquivos `NORMALIZED`, não de uma varredura cega do filesystem.
 
-Research plane e trading plane ainda não existem. A separação física será ampliada quando
-houver entregáveis reais; não foram criadas árvores de arquivos vazios.
+O research plane existe desde a Fase 3; o trading plane não existe. A separação física do
+research plane é ampliada somente por incrementos com contratos e testes reais, sem criar árvores
+vazias ou antecipar um simulador de execução.
 
 O data plane em tempo real é independente do histórico:
 
@@ -96,3 +97,30 @@ exige grid comum, não preenche o passado e elimina o timestamp inteiro quando q
 não possui lookback causal. O backtest não importa adapters Binance, não acessa rede e não produz
 ordens. O modelo next-open serve para triagem; fills parciais, fila, latência e estado de conta
 serão responsabilidades do motor orientado a eventos.
+
+A Fase 3.5 começou pelos contratos, mantendo o motor financeiro intacto:
+
+```text
+FoldContext + TrainingDataset -> Strategy.fit -> FittedStrategy.score
+                                      |                    |
+                         features em allowlist      StrategyScores
+                                                           |
+                                                           v
+                                                   PortfolioPolicy
+```
+
+`select_feature_view` entrega somente chaves e features declaradas. Colunas `future_*`,
+`outcome_*` e `label_*` não podem ser features; targets de treino ficam separados e alinhados pela
+chave. O PR 2 conectou esses contratos ao motor com equivalência integral ao golden baseline:
+
+```text
+baseline.py (compat config) -> ResidualMomentumStrategy
+                            -> NeutralLongShortPolicy
+                                      |
+                                      v
+backtest.py: train slice -> fit -> test score -> target weights -> accounting
+```
+
+O engine conhece somente os contratos, as colunas contábeis padronizadas e os folds. Nomes/pesos
+de momentum e regras de seleção/neutralização não estão no engine. A CLI antiga constrói os
+componentes pelo adaptador; não há rota paralela de cálculo.

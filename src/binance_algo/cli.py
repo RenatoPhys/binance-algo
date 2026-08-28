@@ -70,7 +70,7 @@ from binance_algo.doctor import run_doctor
 from binance_algo.exchange.binance_usdm.rest import BinanceUSDMRestClient
 from binance_algo.logging import configure_logging, get_logger
 from binance_algo.observability.metrics import RecorderMetrics
-from binance_algo.research.backtest import run_and_persist_backtest
+from binance_algo.research.baseline import run_and_persist_phase3_baseline
 from binance_algo.research.dataset import build_and_persist_research_dataset
 
 app = typer.Typer(help="Auditable Binance USD-M Futures public-data foundation.")
@@ -660,7 +660,7 @@ def research_backtest(
         )
         if not dataset_path.is_file():
             raise DataQualityError(f"research dataset does not exist: {dataset_path}")
-        result = run_and_persist_backtest(
+        result = run_and_persist_phase3_baseline(
             dataset_path=dataset_path,
             storage=LocalFilesystemStorage(settings.data_root),
             reports_root=settings.reports_root,

@@ -2,8 +2,8 @@
 
 ## Current milestone
 
-Fase 4 — simulador orientado a eventos (planejamento). A Fase 3 foi concluída como baseline de
-validação; o resultado negativo não foi promovido a alpha.
+Fase 3.5 — plataforma de experimentos e pesquisa em escala. A Fase 3 permanece como golden
+baseline auditável; seu resultado negativo não foi promovido a alpha. A Fase 4 não foi iniciada.
 
 ## Completed
 
@@ -43,30 +43,60 @@ validação; o resultado negativo não foi promovido a alpha.
 - [x] Walk-forward temporal, embargo, regimes, estresses e bootstrap em blocos
 - [x] Relatório de performance/estabilidade da Fase 3 e rerun determinístico
 - [x] Curva SVG opt-in de equity OOS, drawdown e decomposição do P&L por fold
+- [x] Fase 3.5 PR 1: snapshot golden sintético e checksums do baseline real
+- [x] Contratos `Strategy`, `FittedStrategy`, `PortfolioPolicy` e `FoldContext`
+- [x] `TrainingDataset` com target separado e feature view por allowlist
+- [x] Bloqueio contratual de `future_*`, `outcome_*` e `label_*` no scoring
+- [x] ADRs 0006/0007 e documentação inicial da research platform
+- [x] Fase 3.5 PR 2: residual momentum extraído como strategy fixa versionada
+- [x] Neutral long/short extraído como portfolio policy independente
+- [x] Engine recebe `Strategy` + `PortfolioPolicy` e executa treino/teste por fold
+- [x] CLI `research backtest` usa o adaptador do engine genérico, sem rota paralela
+- [x] Regressão sintética e real byte a byte equivalente ao baseline da Fase 3
 
 ## Pending
 
-- [ ] Especificar eventos e invariantes contábeis do simulador da Fase 4
-- [ ] Implementar marketable limit, IOC, post-only e fills parciais
-- [ ] Modelar latência, adverse selection e markout no replay
-- [ ] Reconciliar posições, fees e funding antes de qualquer Demo Trading
+- [ ] PR 3: dataset views, feature/label registry e fingerprint de lineage v2
+- [ ] PR 4: ResearchStore, migrations, experiment identity e code fingerprint
+- [ ] PR 5: artifact pipeline atômico e experiment runner
+- [ ] PR 6: campaign planner/runner determinístico com resume/cache
+- [ ] PRs 7–9: ledger/ablações, robustez/promoção, performance e documentação final
 
 ## Blockers
 
 - Nenhum bloqueio de implementação.
 - Docker e GNU Make não estão instalados no host atual; os equivalentes `uv` são a validação
   primária.
+- `uv` 0.12.7 existe em `C:/Users/User/AppData/Roaming/Python/Python39/Scripts/uv.exe`, mas esse
+  diretório não está no `PATH`; os gates usam o path explícito.
+
+## Differences observed at Phase 3.5 start
+
+- O checkout inicial estava na branch limpa `fix/optional-pnl-chart`; `main` local estava atrás do
+  remoto. Após `git fetch`, `main` avançou somente por fast-forward até o SHA inicial registrado.
+- `PROGRESS.md` e `README.md` apontavam a Fase 4 como próximo marco; a especificação da Fase 3.5
+  substitui esse estado e mantém a Fase 4 não iniciada.
+- O dataset real da Fase 3 está disponível localmente, portanto o baseline real foi reexecutado;
+  não foi necessário limitar o snapshot à fixture sintética.
+- O executável `uv` não está no `PATH`. A instalação existente foi usada por path absoluto, sem
+  alterar o ambiente global.
 
 ## Validation
 
+- SHA inicial da Fase 3.5: `59dd134f13dd788bfcbd03d6f5bc4e3ac9685ab7` (`main` limpo)
+- Versão inicial do pacote: `0.5.0`; runtime resolvido pelo lockfile: Python 3.14.3
 - `uv sync`: passed; lockfile com 59 packages
-- `uv sync --frozen`: passed; `binance-algo==0.4.0`, lockfile com 59 packages
-- `ruff format --check .`: passed; 73 files
+- `uv sync --frozen`: passed; 59 packages verificados
+- `ruff format --check .`: passed; 86 files
 - `ruff check .`: passed
-- `mypy src`: passed; 38 source files
-- `pytest -m "not network"`: 56 passed, 2 deselected
-- `pytest -m network`: 2 passed, 56 deselected
+- `mypy src`: passed; 46 source files
+- `pytest -m "not network"`: 78 passed, 2 deselected
+- testes `network`: não reexecutados neste incremento offline; referência anterior de 2 passed
 - `binance-algo doctor`: todos os checks passaram; SQLite `journal_mode=wal`
+- golden sintético: `tests/golden/research_phase3_synthetic.json`, SHA-256
+  `fd1a5a931de8cc4fac65aa280c0aa64d7a164362745f81493da936fa3b6b4f58`; 3 folds, 72
+  períodos, retorno `0.022538662281505806`, Sharpe `112.98691088898067`, turnover `7.5` e
+  digest canônico da curva `7e0a80839fb9f8d0b404bfb40fe248d6dd100f85efbf408d501e2b7ff27e80b5`
 - `exchange-info snapshot`: 733 instrumentos persistidos
 - DuckDB: 733 linhas, 733 símbolos distintos, zero filtros tick/step ausentes
 - `universe build`: BTCUSDT, ETHUSDT e SOLUSDT; rerun manteve a versão
@@ -97,6 +127,17 @@ validação; o resultado negativo não foi promovido a alpha.
   completo e zero violações temporais, duplicatas ou features nulas
 - backtest Fase 3: versão `974ab2c8643ace95`, 3 folds e 1.008 horas OOS; erro contábil zero,
   exposição líquida média próxima de zero e participação máxima de volume de 0,0426%
+- artifacts do baseline real `974ab2c8643ace95`:
+  - `var/data/gold/binance/usdm/research_backtest/version=974ab2c8643ace95/oos_curve.parquet` —
+    SHA-256 `9ab038223d469e8b8563eda2468bb9c3f56cdc1fe484fe5e3bb4a566612e2d9a`
+  - `var/reports/research_phase3_974ab2c8643ace95.json` — SHA-256
+    `d2c3e87a9d6db5aa84daea98ac29716ece70773224d00e5614b9f603d2d7f079`
+  - `var/reports/research_phase3_974ab2c8643ace95.md` — SHA-256
+    `71b6c6bd546a9086b72660c59e9889edfc65df9c152b40a86a2dd473229139c7`
+  - `var/reports/research_phase3_974ab2c8643ace95_pnl.svg` — SHA-256
+    `c8a7a110b3b973dc13ebf76495e37f51baff5908efbfa5079a97c30d31a06a8d`
+- regressão PR 2: CLI retornou novamente `974ab2c8643ace95`; os quatro SHA-256 acima permaneceram
+  idênticos após a extração de strategy/policy e a ativação de `fit` no treino
 - baseline OOS: retorno de preço somado +1,527%, funding -0,046%, custos explícitos 17,348%,
   retorno composto líquido -14,688%, max drawdown -14,711% e turnover 266,888
 - estabilidade: custos 1,5×/2× produziram -21,781%/-28,285%; atraso de uma barra -12,760%;
@@ -119,6 +160,9 @@ validação; o resultado negativo não foi promovido a alpha.
 - O baseline apresentou rank IC médio de -0,0045 e perda em todos os regimes/estresses. Ele prova
   o pipeline e rejeita a configuração atual; não é evidência de edge nem deve ser otimizado na
   mesma janela.
+- Os parâmetros específicos do baseline ainda existem em `ResearchConfig` para compatibilidade.
+  Somente `baseline.py` os traduz em strategy/policy; a migração para specs próprias permanece
+  pendente e não deve criar uma segunda rota de execução.
 - O fee schedule é uma hipótese configurável com tier `unknown`, não uma consulta da conta. Todo
   uso financeiro exige confirmar fee/tier e manter nova vigência versionada.
 
