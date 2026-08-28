@@ -13,6 +13,10 @@ from binance_algo.research.strategies.funding_carry import (
     FundingCarryParameters,
     FundingCarryStrategy,
 )
+from binance_algo.research.strategies.linear_cross_sectional import (
+    LinearCrossSectionalParameters,
+    LinearCrossSectionalStrategy,
+)
 from binance_algo.research.strategies.residual_mean_reversion import (
     ResidualMeanReversionParameters,
     ResidualMeanReversionStrategy,
@@ -46,6 +50,12 @@ class FundingCarrySpec(BaseModel):
     funding_rate_weight: float = Field(ge=0, le=5)
     funding_change_weight: float = Field(ge=0, le=5)
     momentum_confirmation_weight: float = Field(ge=0, le=5)
+
+
+class LinearCrossSectionalSpec(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    ridge_alpha: float = Field(ge=1e-6, le=100)
 
 
 class ResidualMeanReversionSpec(BaseModel):
@@ -86,6 +96,18 @@ def build_funding_carry(parameters: Mapping[str, Any]) -> FundingCarryStrategy:
         return FundingCarryStrategy(parameters=FundingCarryParameters(**parsed.model_dump()))
     except (TypeError, ValueError, ResearchError) as exc:
         raise ResearchError(f"invalid funding_carry parameters: {exc}") from exc
+
+
+def build_linear_cross_sectional(
+    parameters: Mapping[str, Any],
+) -> LinearCrossSectionalStrategy:
+    try:
+        parsed = LinearCrossSectionalSpec.model_validate(dict(parameters))
+        return LinearCrossSectionalStrategy(
+            parameters=LinearCrossSectionalParameters(**parsed.model_dump())
+        )
+    except (TypeError, ValueError, ResearchError) as exc:
+        raise ResearchError(f"invalid linear_cross_sectional parameters: {exc}") from exc
 
 
 def build_residual_mean_reversion(
@@ -129,6 +151,8 @@ def build_volatility_filtered_sma(parameters: Mapping[str, Any]) -> VolatilityFi
 STRATEGY_FACTORIES: dict[tuple[str, str], StrategyFactory] = {
     ("funding_carry", "1"): build_funding_carry,
     ("funding_carry", "v1"): build_funding_carry,
+    ("linear_cross_sectional", "1"): build_linear_cross_sectional,
+    ("linear_cross_sectional", "v1"): build_linear_cross_sectional,
     ("residual_momentum", "1"): build_residual_momentum,
     ("residual_momentum", "v1"): build_residual_momentum,
     ("residual_mean_reversion", "1"): build_residual_mean_reversion,
@@ -157,12 +181,14 @@ def build_strategy(
 __all__ = [
     "STRATEGY_FACTORIES",
     "FundingCarrySpec",
+    "LinearCrossSectionalSpec",
     "ResidualMeanReversionSpec",
     "ResidualMomentumSpec",
     "SmaCrossoverSpec",
     "StrategyFactory",
     "VolatilityFilteredSmaSpec",
     "build_funding_carry",
+    "build_linear_cross_sectional",
     "build_residual_mean_reversion",
     "build_residual_momentum",
     "build_sma_crossover",
