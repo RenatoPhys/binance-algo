@@ -1,5 +1,17 @@
 # Changelog
 
+## Unreleased — MVP de exploração de estratégias
+
+- Dashboard HTML offline e snapshot JSON determinístico, com filtros, ordenação, links relativos,
+  falhas e resultados negativos preservados.
+- Perfil de campanha `discovery` restrito a baseline, custo `1.5x`, atraso de uma barra e artifacts
+  `summary`; bootstrap, DSR/PBO, artifacts completos e promoção ficam bloqueados.
+- Heartbeat periódico durante trials e benchmark observacional pelo caminho real de campanhas.
+- Feature bundles explícitos para returns/momentum, volatilidade, volume, microestrutura e funding,
+  dirigidos por `configs/feature_sets/phase3_baseline.yaml` sem alterar o golden baseline.
+- Strategies fixas `funding_carry:v1` e `residual_mean_reversion:v1`, com schemas estritos,
+  hipóteses e campanhas pequenas de descoberta sem promoção automática.
+
 ## 0.6.0 — 2026-08-28 — Fase 3.5
 
 - Golden snapshot sintético e registro dos checksums do baseline real da Fase 3.

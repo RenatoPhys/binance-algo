@@ -663,6 +663,18 @@ class ResearchStore:
             raise ResearchStoreError(f"cannot read campaign {identifier_or_name}: {exc}") from exc
         return self._campaign_from_row(row) if row is not None else None
 
+    def list_campaigns(self) -> tuple[CampaignRecord, ...]:
+        """Return every campaign in deterministic registry order."""
+
+        try:
+            with closing(self._connect()) as connection:
+                rows = connection.execute(
+                    "SELECT * FROM research_campaigns ORDER BY created_at_ms, campaign_id"
+                ).fetchall()
+        except sqlite3.Error as exc:
+            raise ResearchStoreError(f"cannot list campaigns: {exc}") from exc
+        return tuple(self._campaign_from_row(row) for row in rows)
+
     def transition_campaign(
         self,
         identifier_or_name: str,

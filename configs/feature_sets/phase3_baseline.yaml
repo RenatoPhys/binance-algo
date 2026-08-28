@@ -1,0 +1,68 @@
+feature_set_id: phase3_baseline_features:v1
+version: v1
+description: Feature set extracted without numerical changes from the Phase 3 baseline.
+
+outputs:
+  - log_return_5m
+  - log_return_15m
+  - log_return_1h
+  - log_return_4h
+  - log_return_24h
+  - realized_volatility_24h
+  - intraday_range_4h
+  - quote_volume_1h
+  - quote_volume_zscore_24h
+  - taker_buy_imbalance_1h
+  - benchmark_return_1h
+  - rolling_beta
+  - residual_momentum_1h
+  - residual_momentum_4h
+  - residual_momentum_24h
+  - market_volatility_regime
+  - funding_rate_current
+  - funding_rate_change
+
+bundles:
+  - bundle_id: returns_momentum
+    version: v1
+    outputs:
+      - log_return_5m
+      - log_return_15m
+      - log_return_1h
+      - log_return_4h
+      - log_return_24h
+      - benchmark_return_1h
+      - rolling_beta
+      - residual_momentum_1h
+      - residual_momentum_4h
+      - residual_momentum_24h
+    parameters:
+      horizons_minutes: [5, 15, 60, 240, 1440]
+      beta_window_hours: $research.beta_window_hours
+    output_parameters:
+      rolling_beta:
+        beta_window_hours: $research.beta_window_hours
+
+  - bundle_id: volatility
+    version: v1
+    outputs:
+      - realized_volatility_24h
+      - intraday_range_4h
+      - market_volatility_regime
+
+  - bundle_id: volume
+    version: v1
+    outputs:
+      - quote_volume_1h
+      - quote_volume_zscore_24h
+
+  - bundle_id: microstructure
+    version: v1
+    outputs:
+      - taker_buy_imbalance_1h
+
+  - bundle_id: funding
+    version: v1
+    outputs:
+      - funding_rate_current
+      - funding_rate_change

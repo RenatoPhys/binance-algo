@@ -27,6 +27,10 @@ def research_frame(days: int = 11) -> pl.DataFrame:
                     "residual_momentum_1h": residual_1h,
                     "residual_momentum_4h": residual_1h * 2 + symbol_index * 0.0001,
                     "residual_momentum_24h": residual_1h * 4 - symbol_index * 0.0001,
+                    "funding_rate_current": (
+                        (symbol_index - 1) * 0.0001 + 0.00001 * math.sin(hour / 8)
+                    ),
+                    "funding_rate_change": 0.00001 * math.cos(hour / 8 + symbol_index),
                     "realized_volatility_24h": common_volatility * (1 + symbol_index * 0.1),
                     "rolling_beta": 0.8 + symbol_index * 0.25,
                     "future_return_1h": 0.0015 * phase - 0.0002 * symbol_index,

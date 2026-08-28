@@ -2,12 +2,18 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from typing import Any
 
 import numpy as np
 import polars as pl
 
-from binance_algo.research.features.base import FeatureDefinition
+from binance_algo.common.errors import ResearchError
+from binance_algo.research.features.base import (
+    FeatureArray,
+    FeatureComputeContext,
+    FeatureDefinition,
+)
 
 
 def compute_asof_funding(
@@ -60,4 +66,31 @@ FUNDING_FEATURES = (
 )
 
 
-__all__ = ["FUNDING_FEATURES", "compute_asof_funding"]
+class FundingBundle:
+    bundle_id = "funding"
+    version = "v1"
+
+    def definitions(self) -> tuple[FeatureDefinition, ...]:
+        return FUNDING_FEATURES
+
+    def compute(
+        self,
+        context: FeatureComputeContext,
+        parameters: Mapping[str, Any],
+    ) -> Mapping[str, FeatureArray]:
+        if parameters:
+            raise ResearchError("funding:v1 does not accept parameters")
+        current = np.empty(context.output_shape, dtype=np.float64)
+        change = np.empty_like(current)
+        for symbol_index, symbol in enumerate(context.symbols):
+            symbol_current, symbol_change = compute_asof_funding(
+                context.funding,
+                symbol=symbol,
+                decision_times=context.decision_times,
+            )
+            current[:, symbol_index] = symbol_current
+            change[:, symbol_index] = symbol_change
+        return {"funding_rate_current": current, "funding_rate_change": change}
+
+
+__all__ = ["FUNDING_FEATURES", "FundingBundle", "compute_asof_funding"]

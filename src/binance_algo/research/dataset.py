@@ -26,19 +26,14 @@ from binance_algo.research.datasets.fingerprints import (
     sha256_path,
 )
 from binance_algo.research.datasets.schemas import RESEARCH_DATASET_SCHEMA_V2
-from binance_algo.research.features.funding import compute_asof_funding
-from binance_algo.research.features.microstructure import compute_taker_imbalance
-from binance_algo.research.features.momentum import compute_log_returns, compute_residual_momentum
+from binance_algo.research.features.base import FeatureComputeContext
 from binance_algo.research.features.registry import (
     PHASE3_FEATURE_REGISTRY,
     FeatureSetSpec,
+    compute_feature_plan,
+    phase3_feature_plan,
     phase3_feature_set,
 )
-from binance_algo.research.features.volatility import (
-    compute_market_volatility_regime,
-    compute_volatility_features,
-)
-from binance_algo.research.features.volume import compute_volume_features
 from binance_algo.research.labels.forward_returns import (
     GROSS_FORWARD_RETURN_1H,
     PHASE3_LABEL_REGISTRY,
@@ -291,45 +286,33 @@ def build_point_in_time_frame(
     log_close = np.log(closes)
     minute_log_returns = np.full_like(log_close, np.nan)
     minute_log_returns[1:] = np.diff(log_close, axis=0)
-    horizons = (5, 15, 60, 240, 1_440)
-    horizon_returns = compute_log_returns(
-        log_close,
-        decision_indices,
-        horizons=horizons,
+    decision_times = close_times[decision_indices]
+    feature_plan = phase3_feature_plan(config)
+    feature_outputs = compute_feature_plan(
+        FeatureComputeContext(
+            symbols=symbols,
+            decision_indices=decision_indices,
+            decision_times=decision_times,
+            log_close=log_close,
+            minute_log_returns=minute_log_returns,
+            highs=highs,
+            lows=lows,
+            quote_volume=quote_volume,
+            taker_quote_volume=taker_quote_volume,
+            funding=funding,
+            prior_outputs={},
+        ),
+        feature_plan,
     )
-    hourly_returns = horizon_returns[60]
-    realized_volatility, intraday_range = compute_volatility_features(
-        minute_log_returns=minute_log_returns,
-        highs=highs,
-        lows=lows,
-        decision_indices=decision_indices,
-    )
-    hourly_quote_volume, volume_zscore = compute_volume_features(
-        quote_volume,
-        decision_indices,
-    )
-    taker_imbalance = compute_taker_imbalance(
-        taker_quote_volume=taker_quote_volume,
-        hourly_quote_volume=hourly_quote_volume,
-        decision_indices=decision_indices,
-    )
-    (
-        benchmark_returns,
-        beta,
-        residual_returns,
-        residual_momentum_4h,
-        residual_momentum_24h,
-    ) = compute_residual_momentum(
-        hourly_returns,
-        symbols=symbols,
-        beta_window_hours=config.beta_window_hours,
-    )
+    feature_names = RESEARCH_DATASET_SCHEMA_V2.feature_columns()
+    if set(feature_outputs) != set(feature_names):
+        raise ResearchError("configured bundle outputs differ from the research dataset schema")
+    hourly_returns = feature_outputs["log_return_1h"]
+    hourly_quote_volume = feature_outputs["quote_volume_1h"]
+    beta = feature_outputs["rolling_beta"]
     btc_index = symbols.index("BTCUSDT")
     eth_index = symbols.index("ETHUSDT")
-    market_returns = (hourly_returns[:, btc_index] + hourly_returns[:, eth_index]) / 2
-    market_volatility_regime = compute_market_volatility_regime(market_returns)
 
-    decision_times = close_times[decision_indices]
     execution_indices = decision_indices + 1
     label_end_indices = execution_indices + horizon
     future_returns = opens[label_end_indices] / opens[execution_indices] - 1
@@ -346,17 +329,8 @@ def build_point_in_time_frame(
             quote_volume[entry_index : entry_index + horizon], axis=0
         )
 
-    funding_current = np.empty_like(hourly_returns)
-    funding_change = np.empty_like(hourly_returns)
     outcome_funding = np.empty_like(hourly_returns)
     for symbol_index, symbol in enumerate(symbols):
-        current, change = compute_asof_funding(
-            funding,
-            symbol=symbol,
-            decision_times=decision_times,
-        )
-        funding_current[:, symbol_index] = current
-        funding_change[:, symbol_index] = change
         outcome_funding[:, symbol_index] = _outcome_funding(
             funding,
             symbol=symbol,
@@ -364,24 +338,17 @@ def build_point_in_time_frame(
             label_end_times=open_times[label_end_indices],
         )
 
-    feature_version = _feature_version(config)
+    feature_version = feature_plan.feature_set.canonical_checksum[:16]
     universe_version = _universe_version(symbols)
     rows: list[dict[str, object]] = []
     for row_index, minute_index in enumerate(decision_indices):
         for symbol_index, symbol in enumerate(symbols):
+            feature_values = {
+                name: float(feature_outputs[name][row_index, symbol_index])
+                for name in feature_names
+            }
             values = (
-                *(horizon_returns[window][row_index, symbol_index] for window in horizons),
-                realized_volatility[row_index, symbol_index],
-                intraday_range[row_index, symbol_index],
-                volume_zscore[row_index, symbol_index],
-                taker_imbalance[row_index, symbol_index],
-                beta[row_index, symbol_index],
-                residual_returns[row_index, symbol_index],
-                residual_momentum_4h[row_index, symbol_index],
-                residual_momentum_24h[row_index, symbol_index],
-                market_volatility_regime[row_index],
-                funding_current[row_index, symbol_index],
-                funding_change[row_index, symbol_index],
+                *feature_values.values(),
                 future_returns[row_index, symbol_index],
                 future_residual[row_index, symbol_index],
                 outcome_quote_volume[row_index, symbol_index],
@@ -401,24 +368,7 @@ def build_point_in_time_frame(
                     "symbol": symbol,
                     "universe_version": universe_version,
                     "feature_version": feature_version,
-                    "log_return_5m": float(horizon_returns[5][row_index, symbol_index]),
-                    "log_return_15m": float(horizon_returns[15][row_index, symbol_index]),
-                    "log_return_1h": float(horizon_returns[60][row_index, symbol_index]),
-                    "log_return_4h": float(horizon_returns[240][row_index, symbol_index]),
-                    "log_return_24h": float(horizon_returns[1_440][row_index, symbol_index]),
-                    "realized_volatility_24h": float(realized_volatility[row_index, symbol_index]),
-                    "intraday_range_4h": float(intraday_range[row_index, symbol_index]),
-                    "quote_volume_1h": float(hourly_quote_volume[row_index, symbol_index]),
-                    "quote_volume_zscore_24h": float(volume_zscore[row_index, symbol_index]),
-                    "taker_buy_imbalance_1h": float(taker_imbalance[row_index, symbol_index]),
-                    "benchmark_return_1h": float(benchmark_returns[row_index, symbol_index]),
-                    "rolling_beta": float(beta[row_index, symbol_index]),
-                    "residual_momentum_1h": float(residual_returns[row_index, symbol_index]),
-                    "residual_momentum_4h": float(residual_momentum_4h[row_index, symbol_index]),
-                    "residual_momentum_24h": float(residual_momentum_24h[row_index, symbol_index]),
-                    "market_volatility_regime": float(market_volatility_regime[row_index]),
-                    "funding_rate_current": float(funding_current[row_index, symbol_index]),
-                    "funding_rate_change": float(funding_change[row_index, symbol_index]),
+                    **feature_values,
                     "future_return_1h": float(future_returns[row_index, symbol_index]),
                     "future_residual_return_1h": float(future_residual[row_index, symbol_index]),
                     "outcome_quote_volume_1h": float(outcome_quote_volume[row_index, symbol_index]),

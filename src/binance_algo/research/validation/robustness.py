@@ -18,6 +18,7 @@ import polars as pl
 
 from binance_algo.common.errors import ResearchError
 from binance_algo.config import ResearchPlatformConfig
+from binance_algo.research.contracts import ValidationProfile
 from binance_algo.research.experiments.models import MetricScope
 from binance_algo.research.experiments.store import CampaignRecord, ResearchStore
 from binance_algo.research.validation.multiple_testing import (
@@ -378,6 +379,19 @@ def build_campaign_robustness(
     platform: ResearchPlatformConfig,
     periods_per_year: int = 24 * 365,
 ) -> CampaignRobustnessResult:
+    try:
+        campaign_payload = orjson.loads(campaign.spec_json)
+        profile = ValidationProfile(
+            str(
+                campaign_payload.get("source_spec", {})
+                .get("validation", {})
+                .get("profile", ValidationProfile.FULL)
+            )
+        )
+    except (AttributeError, TypeError, ValueError, orjson.JSONDecodeError) as exc:
+        raise ResearchError(f"campaign validation profile is invalid: {exc}") from exc
+    if profile is ValidationProfile.DISCOVERY:
+        raise ResearchError("discovery profile does not execute DSR, PBO, or lockbox robustness")
     trials: list[TrialRobustness] = []
     curves: list[tuple[str, pl.DataFrame]] = []
     distinct_tags: set[bytes] = set()

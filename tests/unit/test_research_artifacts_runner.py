@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 from pathlib import Path
+from threading import Event
+from time import sleep
 
 import orjson
 import polars as pl
@@ -35,6 +37,7 @@ def _runner(
     tmp_path: Path,
     *,
     artifact_policy: ArtifactPolicy = ArtifactPolicy.SUMMARY,
+    heartbeat_seconds: float = 30,
 ) -> tuple[ExperimentRunner, ResearchStore, str]:
     settings = load_settings(BASE_CONFIG)
     config = settings.research.model_copy(
@@ -90,6 +93,7 @@ def _runner(
         data_root=data_root,
         research_config=config,
         compression="zstd",
+        heartbeat_seconds=heartbeat_seconds,
     )
     return runner, store, identifier
 
@@ -163,6 +167,70 @@ def test_full_policy_persists_long_form_scores_and_positions(tmp_path: Path) -> 
     assert scores.height == positions.height == curve.height * len(SYMBOLS)
     assert positions["allocated_fee"].sum() == pytest.approx(curve["trading_fees"].sum())
     assert positions["net_contribution"].sum() == pytest.approx(curve["net_return"].sum())
+
+
+def test_runner_heartbeat_stops_after_success_and_failure(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import binance_algo.research.experiments.runner as runner_module
+
+    original_validation = runner_module.run_research_validation
+
+    success_runner, success_store, success_identifier = _runner(
+        tmp_path / "success",
+        heartbeat_seconds=0.01,
+    )
+    success_beat = Event()
+    success_calls: list[str] = []
+    original_success_heartbeat = success_store.heartbeat_run
+
+    def record_success_heartbeat(run_id: str, *, timestamp_ms: int | None = None) -> None:
+        original_success_heartbeat(run_id, timestamp_ms=timestamp_ms)
+        success_calls.append(run_id)
+        success_beat.set()
+
+    def wait_then_validate(*args: object, **kwargs: object):
+        assert success_beat.wait(timeout=1)
+        return original_validation(*args, **kwargs)
+
+    monkeypatch.setattr(success_store, "heartbeat_run", record_success_heartbeat)
+    monkeypatch.setattr(runner_module, "run_research_validation", wait_then_validate)
+    success_runner.run(success_identifier)
+    calls_after_success = len(success_calls)
+    sleep(0.04)
+    assert calls_after_success >= 1
+    assert len(success_calls) == calls_after_success
+
+    failure_runner, failure_store, failure_identifier = _runner(
+        tmp_path / "failure",
+        heartbeat_seconds=0.01,
+    )
+    failure_beat = Event()
+    failure_calls: list[str] = []
+    original_failure_heartbeat = failure_store.heartbeat_run
+
+    def record_failure_heartbeat(run_id: str, *, timestamp_ms: int | None = None) -> None:
+        original_failure_heartbeat(run_id, timestamp_ms=timestamp_ms)
+        failure_calls.append(run_id)
+        failure_beat.set()
+
+    def wait_then_fail(*_: object, **__: object) -> None:
+        assert failure_beat.wait(timeout=1)
+        raise ResearchError("simulated validation failure")
+
+    monkeypatch.setattr(failure_store, "heartbeat_run", record_failure_heartbeat)
+    monkeypatch.setattr(runner_module, "run_research_validation", wait_then_fail)
+    with pytest.raises(ResearchError, match="simulated validation failure"):
+        failure_runner.run(failure_identifier)
+    calls_after_failure = len(failure_calls)
+    sleep(0.04)
+    assert calls_after_failure >= 1
+    assert len(failure_calls) == calls_after_failure
+    assert (
+        failure_store.list_runs(experiment_id_value=failure_identifier)[0].status
+        is RunStatus.FAILED
+    )
 
 
 def test_corruption_is_detected_and_failed_bundle_is_quarantined(

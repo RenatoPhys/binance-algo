@@ -9,10 +9,12 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from decimal import Decimal
 from pathlib import Path
-from typing import Any, cast
+from threading import Event, Thread
+from types import TracebackType
+from typing import Any, Self, cast
 
 import orjson
-from pydantic import BaseModel, ConfigDict, Field, ValidationError
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
 
 from binance_algo.common.errors import ResearchError
 from binance_algo.config import FeeScheduleConfig, ResearchConfig
@@ -22,6 +24,7 @@ from binance_algo.research.backtest import (
     ACCOUNTING_OUTCOME_FIELDS,
     run_research_validation,
 )
+from binance_algo.research.contracts import ValidationProfile
 from binance_algo.research.datasets.references import (
     DatasetReference,
     load_dataset_reference,
@@ -76,10 +79,67 @@ class SplitParameters(_StrictParameters):
 
 
 class ValidationParameters(_StrictParameters):
+    profile: ValidationProfile = ValidationProfile.FULL
     stress_cost_multipliers: tuple[float, ...] = (1.5, 2.0)
     stress_signal_delay_bars: tuple[int, ...] = (1,)
-    bootstrap_samples: int = Field(ge=100, le=10_000)
-    bootstrap_block_hours: int = Field(ge=2, le=720)
+    bootstrap_samples: int | None = Field(default=None, ge=100, le=10_000)
+    bootstrap_block_hours: int | None = Field(default=None, ge=2, le=720)
+
+    @model_validator(mode="after")
+    def validate_profile(self) -> Self:
+        if self.profile is ValidationProfile.DISCOVERY:
+            if self.stress_cost_multipliers != (1.5,):
+                raise ValueError("discovery requires exactly the 1.5x cost stress")
+            if self.stress_signal_delay_bars != (1,):
+                raise ValueError("discovery requires exactly the one-bar delay stress")
+            if self.bootstrap_samples is not None or self.bootstrap_block_hours is not None:
+                raise ValueError("discovery cannot configure bootstrap")
+        elif self.bootstrap_samples is None or self.bootstrap_block_hours is None:
+            raise ValueError("full validation requires bootstrap parameters")
+        return self
+
+
+class _RunHeartbeat:
+    """Keep a running registry attempt fresh until its expensive work exits."""
+
+    def __init__(self, store: ResearchStore, run_id: str, *, interval_seconds: float) -> None:
+        if interval_seconds <= 0:
+            raise ValueError("heartbeat interval must be positive")
+        self.store = store
+        self.run_id = run_id
+        self.interval_seconds = interval_seconds
+        self._stop = Event()
+        self._error: Exception | None = None
+        self._thread = Thread(
+            target=self._beat,
+            name=f"research-heartbeat-{run_id[:12]}",
+            daemon=True,
+        )
+
+    def __enter__(self) -> _RunHeartbeat:
+        self._thread.start()
+        return self
+
+    def __exit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc: BaseException | None,
+        traceback_value: TracebackType | None,
+    ) -> None:
+        del exc_type, traceback_value
+        self._stop.set()
+        self._thread.join()
+        if self._error is not None and exc is None:
+            raise ResearchError(f"experiment heartbeat failed: {self._error}") from self._error
+
+    def _beat(self) -> None:
+        while not self._stop.wait(self.interval_seconds):
+            try:
+                self.store.heartbeat_run(self.run_id)
+            except Exception as exc:
+                self._error = exc
+                self._stop.set()
+                return
 
 
 @dataclass(frozen=True, slots=True)
@@ -207,7 +267,10 @@ def resolve_dataset_path(data_root: Path, identity: DatasetIdentity) -> Path:
     )
 
 
-def _execution_config(spec: ExperimentSpec, base: ResearchConfig) -> ResearchConfig:
+def _execution_config(
+    spec: ExperimentSpec,
+    base: ResearchConfig,
+) -> tuple[ResearchConfig, ValidationParameters]:
     try:
         if (spec.execution_model.component_id, spec.execution_model.version) not in {
             ("bar_next_open", "1"),
@@ -235,24 +298,28 @@ def _execution_config(spec: ExperimentSpec, base: ResearchConfig) -> ResearchCon
         validation = ValidationParameters.model_validate(spec.validation_plan.parameters)
     except ValidationError as exc:
         raise ResearchError(f"invalid experiment execution parameters: {exc}") from exc
-    if validation.stress_cost_multipliers != (1.5, 2.0):
-        raise ResearchError("this runner requires cost stress multipliers [1.5, 2.0]")
+    expected_costs = (1.5,) if validation.profile is ValidationProfile.DISCOVERY else (1.5, 2.0)
+    if validation.stress_cost_multipliers != expected_costs:
+        raise ResearchError(
+            f"{validation.profile.value} requires cost stress multipliers {list(expected_costs)}"
+        )
     if validation.stress_signal_delay_bars != (1,):
         raise ResearchError("this runner requires the one-bar signal-delay stress")
-    return base.model_copy(
-        update={
-            "spread_bps": costs.spread_bps,
-            "slippage_bps": costs.slippage_bps,
-            "initial_capital_usdt": costs.initial_capital_usdt,
-            "fee_schedule": costs.fee_schedule,
-            "walk_forward_train_days": splits.train_days,
-            "walk_forward_test_days": splits.test_days,
-            "embargo_bars": splits.embargo_bars,
-            "block_bootstrap_samples": validation.bootstrap_samples,
-            "block_bootstrap_hours": validation.bootstrap_block_hours,
-            "random_seed": spec.random_seed,
-        }
-    )
+    updates: dict[str, Any] = {
+        "spread_bps": costs.spread_bps,
+        "slippage_bps": costs.slippage_bps,
+        "initial_capital_usdt": costs.initial_capital_usdt,
+        "fee_schedule": costs.fee_schedule,
+        "walk_forward_train_days": splits.train_days,
+        "walk_forward_test_days": splits.test_days,
+        "embargo_bars": splits.embargo_bars,
+        "random_seed": spec.random_seed,
+    }
+    if validation.bootstrap_samples is not None:
+        updates["block_bootstrap_samples"] = validation.bootstrap_samples
+    if validation.bootstrap_block_hours is not None:
+        updates["block_bootstrap_hours"] = validation.bootstrap_block_hours
+    return base.model_copy(update=updates), validation
 
 
 class ExperimentRunner:
@@ -263,10 +330,14 @@ class ExperimentRunner:
         data_root: Path,
         research_config: ResearchConfig,
         compression: str,
+        heartbeat_seconds: float = 30,
     ) -> None:
         self.store = store
         self.data_root = data_root.resolve()
         self.research_config = research_config
+        if heartbeat_seconds <= 0:
+            raise ValueError("heartbeat_seconds must be positive")
+        self.heartbeat_seconds = heartbeat_seconds
         self.pipeline = ExperimentArtifactPipeline(
             self.data_root,
             compression=compression,
@@ -314,45 +385,56 @@ class ExperimentRunner:
                 outcome_columns=ACCOUNTING_OUTCOME_FIELDS,
                 metadata_columns=ACCOUNTING_METADATA_FIELDS,
             )
-            config = _execution_config(spec, self.research_config)
-            validation = run_research_validation(
-                loaded_dataset.frame,
-                config=config,
-                strategy=strategy,
-                portfolio_policy=portfolio_policy,
-                panel_data=loaded_dataset.panel,
-            )
-            bundle = self.pipeline.persist(
-                experiment_id=identifier,
-                run_id=running.run_id,
-                spec=spec,
-                run=validation.run,
-                stress=validation.stress,
-                bootstrap=validation.bootstrap,
-                generate_chart=generate_chart,
-            )
-            artifact_directory = bundle.final_directory
-            digest = result_digest(
-                metrics=bundle.metrics_payload,
-                artifact_checksums=bundle.artifact_checksums,
-            )
-            deterministic = None
-            if previous is not None:
-                deterministic = previous.result_digest == digest
-                if not deterministic:
-                    raise ResearchError(
-                        "determinism violation: rerun result_digest differs from prior success"
-                    )
-            verification = verify_run_artifacts(
-                data_root=self.data_root,
-                run_id=running.run_id,
-                artifacts=bundle.artifacts,
-            )
-            if not verification.valid:
-                raise ResearchError(
-                    "artifact verification failed before completion: "
-                    + "; ".join(verification.issues)
+            config, validation_parameters = _execution_config(spec, self.research_config)
+            if (
+                validation_parameters.profile is ValidationProfile.DISCOVERY
+                and spec.artifact_policy is not ArtifactPolicy.SUMMARY
+            ):
+                raise ResearchError("discovery experiments require summary artifacts")
+            with _RunHeartbeat(
+                self.store,
+                running.run_id,
+                interval_seconds=self.heartbeat_seconds,
+            ):
+                validation = run_research_validation(
+                    loaded_dataset.frame,
+                    config=config,
+                    strategy=strategy,
+                    portfolio_policy=portfolio_policy,
+                    panel_data=loaded_dataset.panel,
+                    profile=validation_parameters.profile,
                 )
+                bundle = self.pipeline.persist(
+                    experiment_id=identifier,
+                    run_id=running.run_id,
+                    spec=spec,
+                    run=validation.run,
+                    stress=validation.stress,
+                    bootstrap=validation.bootstrap,
+                    generate_chart=generate_chart,
+                )
+                artifact_directory = bundle.final_directory
+                digest = result_digest(
+                    metrics=bundle.metrics_payload,
+                    artifact_checksums=bundle.artifact_checksums,
+                )
+                deterministic = None
+                if previous is not None:
+                    deterministic = previous.result_digest == digest
+                    if not deterministic:
+                        raise ResearchError(
+                            "determinism violation: rerun result_digest differs from prior success"
+                        )
+                verification = verify_run_artifacts(
+                    data_root=self.data_root,
+                    run_id=running.run_id,
+                    artifacts=bundle.artifacts,
+                )
+                if not verification.valid:
+                    raise ResearchError(
+                        "artifact verification failed before completion: "
+                        + "; ".join(verification.issues)
+                    )
             completed = self.store.complete_run(
                 running.run_id,
                 result_digest_value=digest,
@@ -433,7 +515,7 @@ class ExperimentRunner:
 
     def _write_traceback(self, run_id: str) -> str:
         storage = LocalFilesystemStorage(self.data_root)
-        base = storage.path("quarantine", "research", f"{run_id}-traceback")
+        base = storage.path("quarantine", "research", f"{run_id[:24]}-traceback")
         directory = base
         ordinal = 1
         while directory.exists():
@@ -451,6 +533,7 @@ __all__ = [
     "ExperimentRunner",
     "SplitParameters",
     "ValidationParameters",
+    "_RunHeartbeat",
     "build_phase3_experiment_spec",
     "phase3_baseline_hypothesis",
     "resolve_dataset_path",

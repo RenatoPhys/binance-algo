@@ -1,0 +1,60 @@
+campaign:
+  name: funding_carry_v1_discovery
+  description: >-
+    Small discovery grid for fixed funding carry with residual-momentum confirmation. This records
+    exploratory evidence only and cannot promote an experiment.
+  hypothesis_id: HYP-FUNDING-CARRY-0001
+  artifact_policy: summary
+  max_trials: 6
+
+dataset:
+  manifest: latest
+
+feature_set:
+  name: phase3_baseline_features
+  version: "1"
+
+label:
+  name: gross_forward_return_1h
+  version: "1"
+  horizon_minutes: 60
+
+strategy:
+  name: funding_carry
+  version: "1"
+  fixed:
+    funding_rate_weight: 1.0
+  grid:
+    funding_change_weight: [0.0, 0.5]
+    momentum_confirmation_weight: [0.0, 0.25, 0.5]
+
+portfolio:
+  name: neutral_long_short
+  version: "1"
+  fixed:
+    no_trade_score_band: 0.10
+    gross_exposure: 0.50
+    annual_volatility_target: 0.15
+    max_symbol_weight: 0.25
+
+execution:
+  name: bar_next_open
+  version: "1"
+  fixed: {}
+
+costs:
+  name: configured_taker
+  version: "1"
+  fixed:
+    cost_multiplier: 1.0
+
+validation:
+  profile: discovery
+  split_plan: expanding_walk_forward_v1
+  stress_cost_multipliers: [1.5]
+  stress_signal_delay_bars: [1]
+
+runner:
+  max_workers: 4
+  fail_fast: false
+  resume: true

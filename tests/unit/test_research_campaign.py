@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 import tempfile
+from dataclasses import replace
 from pathlib import Path
 
 import orjson
 import polars as pl
 import pytest
+import yaml
 from hypothesis import given
 from hypothesis import strategies as st
 
@@ -16,7 +18,11 @@ from binance_algo.research.experiments.ablation import (
     AblationDeclaration,
     AblationRunner,
 )
-from binance_algo.research.experiments.campaign import CampaignSpec, plan_campaign
+from binance_algo.research.experiments.campaign import (
+    CampaignSpec,
+    load_campaign_spec,
+    plan_campaign,
+)
 from binance_algo.research.experiments.campaign_runner import CampaignRunner
 from binance_algo.research.experiments.models import (
     CampaignStatus,
@@ -213,6 +219,82 @@ def test_campaign_expansion_is_deterministic_constrained_and_path_independent(
             research_config=config,
             code_fingerprint=_fingerprint(),
         )
+
+
+def test_discovery_plan_is_summary_only_and_blocks_robustness_and_promotion(
+    tmp_path: Path,
+) -> None:
+    settings = load_settings(BASE_CONFIG)
+    config = settings.research.model_copy(update={"block_bootstrap_samples": 100})
+    data_root = tmp_path / "data"
+    payload = _campaign(_dataset(data_root)).model_dump(mode="json")
+    payload["validation"] = {
+        "profile": "discovery",
+        "split_plan": "expanding_walk_forward_v1",
+        "train_days": 7,
+        "test_days": 1,
+        "require_parameter_sum": payload["validation"]["require_parameter_sum"],
+    }
+    discovery = CampaignSpec.model_validate(payload)
+    plan = plan_campaign(
+        discovery,
+        project_root=PROJECT_ROOT,
+        data_root=data_root,
+        research_config=config,
+        code_fingerprint=_fingerprint(),
+    )
+
+    assert all(trial.spec.artifact_policy.value == "summary" for trial in plan.trials)
+    assert all(
+        trial.spec.validation_plan.parameters
+        == {
+            "profile": "discovery",
+            "stress_cost_multipliers": [1.5],
+            "stress_signal_delay_bars": [1],
+        }
+        for trial in plan.trials
+    )
+    payload["campaign"]["artifact_policy"] = "full"
+    with pytest.raises(ValueError, match="discovery requires artifact_policy: summary"):
+        CampaignSpec.model_validate(payload)
+
+    store = ResearchStore(tmp_path / "research.sqlite3")
+    store.initialize()
+    sync_builtin_registry(store, research_config=config)
+    store.register_hypothesis(_hypothesis())
+    campaign_runner = CampaignRunner(
+        store=store,
+        data_root=data_root,
+        reports_root=tmp_path / "reports",
+        research_config=config,
+        compression=settings.storage.parquet_compression,
+    )
+    campaign = campaign_runner.register(plan)
+    manager = PromotionManager(
+        store=store,
+        experiment_runner=ExperimentRunner(
+            store=store,
+            data_root=data_root,
+            research_config=config,
+            compression=settings.storage.parquet_compression,
+        ),
+        data_root=data_root,
+        reports_root=tmp_path / "reports",
+        platform=settings.research_platform,
+        current_code_fingerprint=_fingerprint(),
+    )
+    experiment_id = plan.trials[0].experiment_id
+    with pytest.raises(ResearchError, match="discovery profile explicitly blocks"):
+        manager.promote_candidate(experiment_id, reason="must be blocked")
+    with pytest.raises(ResearchError, match="does not execute DSR, PBO"):
+        build_campaign_robustness(
+            store=store,
+            campaign=campaign,
+            data_root=data_root,
+            reports_root=tmp_path / "reports",
+            platform=settings.research_platform,
+        )
+    assert store.list_promotions(experiment_id) == ()
 
 
 @given(grid_order=st.permutations(("momentum_weight_1h", "momentum_weight_24h")))
@@ -426,3 +508,81 @@ def test_partial_campaign_resumes_without_rerunning_successes(
     assert resumed.campaign.status is CampaignStatus.COMPLETED
     assert resumed.cache_hit_count == 2
     assert resumed.executed_count == resumed.succeeded_count - resumed.cache_hit_count == 1
+
+
+@pytest.mark.parametrize(
+    ("campaign_file", "hypothesis_file"),
+    [
+        ("funding_carry_discovery.yaml", "funding_carry_v1.yaml"),
+        ("residual_mean_reversion_discovery.yaml", "residual_mean_reversion_v1.yaml"),
+    ],
+)
+def test_new_strategy_campaign_configs_plan_and_smoke(
+    tmp_path: Path,
+    campaign_file: str,
+    hypothesis_file: str,
+) -> None:
+    settings = load_settings(BASE_CONFIG)
+    config = settings.research.model_copy(update={"block_bootstrap_samples": 100})
+    case_root = tmp_path / ("fc" if campaign_file.startswith("funding") else "rmr")
+    data_root = case_root / "data"
+    source = load_campaign_spec(PROJECT_ROOT / "configs" / "experiments" / campaign_file)
+    source = source.model_copy(
+        update={
+            "dataset": source.dataset.model_copy(update={"manifest": str(_dataset(data_root))}),
+            "validation": source.validation.model_copy(update={"train_days": 7, "test_days": 1}),
+        }
+    )
+    plan = plan_campaign(
+        source,
+        project_root=PROJECT_ROOT,
+        data_root=data_root,
+        research_config=config,
+        code_fingerprint=_fingerprint(),
+    )
+    assert plan.valid_combinations == 6
+    assert plan.valid_combinations <= source.campaign.max_trials <= 50
+    assert source.campaign.artifact_policy.value == "summary"
+    assert source.validation.profile.value == "discovery"
+    assert source.runner.max_workers == 4
+
+    hypothesis_payload = yaml.safe_load(
+        (PROJECT_ROOT / "configs" / "hypotheses" / hypothesis_file).read_text(encoding="utf-8")
+    )
+    hypothesis = HypothesisSpec.model_validate(hypothesis_payload)
+    store = ResearchStore(case_root / "research.sqlite3")
+    store.initialize()
+    sync_builtin_registry(store, research_config=config)
+    store.register_hypothesis(hypothesis)
+    smoke_source = source.model_copy(
+        update={"runner": source.runner.model_copy(update={"max_workers": 1})}
+    )
+    smoke_plan = replace(
+        plan,
+        source=smoke_source,
+        valid_combinations=1,
+        trials=(plan.trials[0],),
+    )
+    result = CampaignRunner(
+        store=store,
+        data_root=data_root,
+        reports_root=case_root / "reports",
+        research_config=config,
+        compression=settings.storage.parquet_compression,
+        heartbeat_seconds=0.01,
+    ).run(smoke_plan)
+
+    assert result.succeeded_count == result.executed_count == 1
+    assert result.failed_count == 0
+    run = store.latest_successful_run(plan.trials[0].experiment_id)
+    assert run is not None
+    stress_regimes = {
+        metric.regime for metric in store.list_metrics(run.run_id) if metric.scope.value == "STRESS"
+    }
+    assert stress_regimes == {"cost_1_5x", "signal_delay_1_bar"}
+    artifacts = store.list_artifacts(run.run_id)
+    assert not {"scores", "positions"}.intersection(
+        artifact.artifact_type for artifact in artifacts
+    )
+    metrics = next(artifact for artifact in artifacts if artifact.artifact_type == "metrics")
+    assert orjson.loads((data_root / metrics.path).read_bytes())["bootstrap"] == {}

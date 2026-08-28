@@ -2,11 +2,17 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from typing import Any
 
 import numpy as np
 
-from binance_algo.research.features.base import FeatureDefinition
+from binance_algo.common.errors import ResearchError
+from binance_algo.research.features.base import (
+    FeatureArray,
+    FeatureComputeContext,
+    FeatureDefinition,
+)
 
 
 def compute_taker_imbalance(
@@ -49,4 +55,27 @@ MICROSTRUCTURE_FEATURES = (
 )
 
 
-__all__ = ["MICROSTRUCTURE_FEATURES", "compute_taker_imbalance"]
+class MicrostructureBundle:
+    bundle_id = "microstructure"
+    version = "v1"
+
+    def definitions(self) -> tuple[FeatureDefinition, ...]:
+        return MICROSTRUCTURE_FEATURES
+
+    def compute(
+        self,
+        context: FeatureComputeContext,
+        parameters: Mapping[str, Any],
+    ) -> Mapping[str, FeatureArray]:
+        if parameters:
+            raise ResearchError("microstructure:v1 does not accept parameters")
+        return {
+            "taker_buy_imbalance_1h": compute_taker_imbalance(
+                taker_quote_volume=context.taker_quote_volume,
+                hourly_quote_volume=context.require_output("quote_volume_1h"),
+                decision_indices=context.decision_indices,
+            )
+        }
+
+
+__all__ = ["MICROSTRUCTURE_FEATURES", "MicrostructureBundle", "compute_taker_imbalance"]

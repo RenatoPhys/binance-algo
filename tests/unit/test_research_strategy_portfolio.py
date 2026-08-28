@@ -11,6 +11,11 @@ from binance_algo.research.portfolio.neutral_long_short import (
     NeutralLongShortParameters,
     NeutralLongShortPolicy,
 )
+from binance_algo.research.strategies.funding_carry import FUNDING_CARRY_FEATURES
+from binance_algo.research.strategies.registry import build_strategy
+from binance_algo.research.strategies.residual_mean_reversion import (
+    RESIDUAL_MEAN_REVERSION_FEATURES,
+)
 from binance_algo.research.strategies.residual_momentum import (
     RESIDUAL_MOMENTUM_FEATURES,
     ResidualMomentumParameters,
@@ -123,6 +128,85 @@ def test_residual_momentum_rejects_invalid_parameters(
             momentum_weight_1h=weights[0],
             momentum_weight_4h=weights[1],
             momentum_weight_24h=weights[2],
+        )
+
+
+def test_funding_carry_factory_is_strict_fixed_and_directional() -> None:
+    strategy = build_strategy(
+        "funding_carry",
+        "v1",
+        {
+            "funding_rate_weight": 1.0,
+            "funding_change_weight": 0.5,
+            "momentum_confirmation_weight": 0.25,
+        },
+    )
+    train = pl.DataFrame(
+        {
+            "decision_time_ms": [1_500] * 3,
+            "symbol": ["BTCUSDT", "ETHUSDT", "SOLUSDT"],
+            "funding_rate_current": [-0.001, 0.0, 0.001],
+            "funding_rate_change": [-0.0001, 0.0, 0.0001],
+            "residual_momentum_4h": [1.0, 0.0, -1.0],
+        }
+    )
+    scoring = train.with_columns(pl.lit(3_000).alias("decision_time_ms"))
+    fitted = strategy.fit(TrainingDataset(features=train, target=None), context=_context())
+    scores = fitted.score(scoring, context=_context()).frame.sort("symbol")
+
+    assert strategy.required_features() == FUNDING_CARRY_FEATURES
+    assert strategy.target_column() is None
+    assert scores.filter(pl.col("symbol") == "BTCUSDT")["score"].item() > 0
+    assert scores.filter(pl.col("symbol") == "SOLUSDT")["score"].item() < 0
+    with pytest.raises(ResearchError, match="extra_forbidden"):
+        build_strategy(
+            "funding_carry",
+            "1",
+            {
+                "funding_rate_weight": 1.0,
+                "funding_change_weight": 0.5,
+                "momentum_confirmation_weight": 0.25,
+                "leverage": 10,
+            },
+        )
+
+
+def test_residual_mean_reversion_factory_is_strict_fixed_and_directional() -> None:
+    strategy = build_strategy(
+        "residual_mean_reversion",
+        "1",
+        {
+            "momentum_weight_1h": 0.75,
+            "momentum_weight_4h": 0.25,
+            "volatility_adjustment": 0.5,
+        },
+    )
+    train = pl.DataFrame(
+        {
+            "decision_time_ms": [1_500] * 3,
+            "symbol": ["BTCUSDT", "ETHUSDT", "SOLUSDT"],
+            "residual_momentum_1h": [1.0, 0.0, -1.0],
+            "residual_momentum_4h": [2.0, 0.0, -2.0],
+            "realized_volatility_24h": [0.02, 0.01, 0.02],
+        }
+    )
+    scoring = train.with_columns(pl.lit(3_000).alias("decision_time_ms"))
+    fitted = strategy.fit(TrainingDataset(features=train, target=None), context=_context())
+    scores = fitted.score(scoring, context=_context()).frame.sort("symbol")
+
+    assert strategy.required_features() == RESIDUAL_MEAN_REVERSION_FEATURES
+    assert strategy.target_column() is None
+    assert scores.filter(pl.col("symbol") == "BTCUSDT")["score"].item() < 0
+    assert scores.filter(pl.col("symbol") == "SOLUSDT")["score"].item() > 0
+    with pytest.raises(ResearchError, match="weights must sum to one"):
+        build_strategy(
+            "residual_mean_reversion",
+            "v1",
+            {
+                "momentum_weight_1h": 0.8,
+                "momentum_weight_4h": 0.3,
+                "volatility_adjustment": 0.0,
+            },
         )
 
 

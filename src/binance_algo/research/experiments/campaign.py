@@ -15,6 +15,7 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_valida
 
 from binance_algo.common.errors import ResearchError
 from binance_algo.config import ResearchConfig
+from binance_algo.research.contracts import ValidationProfile
 from binance_algo.research.datasets.references import DatasetReference, load_dataset_reference
 from binance_algo.research.experiments.ablation import AblationDeclaration
 from binance_algo.research.experiments.canonical import canonical_sha256, canonicalize
@@ -94,12 +95,13 @@ class ParameterSumConstraint(StrictCampaignModel):
 
 
 class CampaignValidation(StrictCampaignModel):
+    profile: ValidationProfile = ValidationProfile.FULL
     split_plan: str = "expanding_walk_forward_v1"
     train_days: int | None = Field(default=None, ge=7, le=3650)
     test_days: int | None = Field(default=None, ge=1, le=365)
     embargo_bars: int | None = Field(default=None, ge=1, le=24)
-    stress_cost_multipliers: tuple[float, ...] = (1.5, 2.0)
-    stress_signal_delay_bars: tuple[int, ...] = (1,)
+    stress_cost_multipliers: tuple[float, ...] | None = None
+    stress_signal_delay_bars: tuple[int, ...] | None = None
     bootstrap_samples: int | None = Field(default=None, ge=100, le=10_000)
     bootstrap_block_hours: int | None = Field(default=None, ge=2, le=720)
     require_parameter_sum: tuple[ParameterSumConstraint, ...] = ()
@@ -112,6 +114,25 @@ class CampaignValidation(StrictCampaignModel):
         if isinstance(value, dict):
             return (value,)
         return value
+
+    @model_validator(mode="after")
+    def validate_profile(self) -> Self:
+        if self.profile is ValidationProfile.DISCOVERY:
+            if self.stress_cost_multipliers not in {None, (1.5,)}:
+                raise ValueError("discovery runs only the 1.5x cost stress")
+            if self.stress_signal_delay_bars not in {None, (1,)}:
+                raise ValueError("discovery runs only the one-bar signal-delay stress")
+            if self.bootstrap_samples is not None or self.bootstrap_block_hours is not None:
+                raise ValueError("discovery does not run bootstrap validation")
+        return self
+
+    def resolved_cost_multipliers(self) -> tuple[float, ...]:
+        if self.stress_cost_multipliers is not None:
+            return self.stress_cost_multipliers
+        return (1.5,) if self.profile is ValidationProfile.DISCOVERY else (1.5, 2.0)
+
+    def resolved_signal_delays(self) -> tuple[int, ...]:
+        return self.stress_signal_delay_bars or (1,)
 
 
 class CampaignRunnerSpec(StrictCampaignModel):
@@ -132,6 +153,15 @@ class CampaignSpec(StrictCampaignModel):
     validation: CampaignValidation
     runner: CampaignRunnerSpec = Field(default_factory=CampaignRunnerSpec)
     ablation: tuple[AblationDeclaration, ...] = ()
+
+    @model_validator(mode="after")
+    def enforce_discovery_limits(self) -> Self:
+        if (
+            self.validation.profile is ValidationProfile.DISCOVERY
+            and self.campaign.artifact_policy is not ArtifactPolicy.SUMMARY
+        ):
+            raise ValueError("discovery requires artifact_policy: summary")
+        return self
 
 
 @dataclass(frozen=True, slots=True)
@@ -361,6 +391,20 @@ def plan_campaign(
     validation = source.validation
     if validation.split_plan != "expanding_walk_forward_v1":
         raise ResearchError(f"unsupported split plan: {validation.split_plan}")
+    validation_parameters: dict[str, Any] = {
+        "profile": validation.profile.value,
+        "stress_cost_multipliers": list(validation.resolved_cost_multipliers()),
+        "stress_signal_delay_bars": list(validation.resolved_signal_delays()),
+    }
+    if validation.profile is ValidationProfile.FULL:
+        validation_parameters.update(
+            {
+                "bootstrap_samples": validation.bootstrap_samples
+                or research_config.block_bootstrap_samples,
+                "bootstrap_block_hours": validation.bootstrap_block_hours
+                or research_config.block_bootstrap_hours,
+            }
+        )
     trials = []
     for ordinal, (strategy_parameters, portfolio_parameters) in enumerate(valid):
         spec = ExperimentSpec(
@@ -404,14 +448,7 @@ def plan_campaign(
             validation_plan=ParameterizedComponent(
                 component_id="phase3_validation",
                 version="1",
-                parameters={
-                    "stress_cost_multipliers": list(validation.stress_cost_multipliers),
-                    "stress_signal_delay_bars": list(validation.stress_signal_delay_bars),
-                    "bootstrap_samples": validation.bootstrap_samples
-                    or research_config.block_bootstrap_samples,
-                    "bootstrap_block_hours": validation.bootstrap_block_hours
-                    or research_config.block_bootstrap_hours,
-                },
+                parameters=validation_parameters,
             ),
             random_seed=research_config.random_seed,
             code_fingerprint=fingerprint,

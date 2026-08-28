@@ -11,13 +11,18 @@ import polars as pl
 
 from binance_algo.config import load_settings
 from binance_algo.data.storage import LocalFilesystemStorage
-from binance_algo.research.backtest import run_walk_forward
+from binance_algo.research.backtest import run_research_validation, run_walk_forward
 from binance_algo.research.baseline import (
     build_phase3_baseline_components,
     run_and_persist_phase3_baseline,
     run_phase3_walk_forward,
 )
-from binance_algo.research.contracts import FoldContext, StrategyScores, TrainingDataset
+from binance_algo.research.contracts import (
+    FoldContext,
+    StrategyScores,
+    TrainingDataset,
+    ValidationProfile,
+)
 from binance_algo.research.strategies.base import FittedStrategy, Strategy
 from binance_algo.research.visualization import render_pnl_svg
 
@@ -125,6 +130,45 @@ def test_walk_forward_is_temporal_costed_and_accounting_balances() -> None:
     assert "Decomposição acumulada" in svg
     assert svg.count("<polyline") == 7
     assert all(f"fold {number}" in svg for number in range(1, len(baseline.folds) + 1))
+
+
+def test_discovery_runs_only_fast_validation_while_full_remains_equivalent() -> None:
+    settings = load_settings(BASE_CONFIG)
+    config = settings.research.model_copy(
+        update={
+            "walk_forward_train_days": 7,
+            "walk_forward_test_days": 1,
+            "block_bootstrap_samples": 100,
+        }
+    )
+    components = build_phase3_baseline_components(config)
+    frame = _research_frame()
+
+    discovery = run_research_validation(
+        frame,
+        config=config,
+        strategy=components.strategy,
+        portfolio_policy=components.portfolio_policy,
+        profile=ValidationProfile.DISCOVERY,
+    )
+    full = run_research_validation(
+        frame,
+        config=config,
+        strategy=components.strategy,
+        portfolio_policy=components.portfolio_policy,
+        profile=ValidationProfile.FULL,
+    )
+
+    assert discovery.run.metrics == full.run.metrics
+    assert set(discovery.stress) == {"cost_1_5x", "signal_delay_1_bar"}
+    assert discovery.bootstrap == {}
+    assert set(full.stress) == {
+        "cost_1_0x",
+        "cost_1_5x",
+        "cost_2_0x",
+        "signal_delay_1_bar",
+    }
+    assert full.bootstrap
 
 
 def test_generic_engine_fits_only_train_and_scores_only_declared_test_features() -> None:

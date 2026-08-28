@@ -21,6 +21,7 @@ from binance_algo.research.contracts import (
     FEATURE_KEY_COLUMNS,
     FoldContext,
     TrainingDataset,
+    ValidationProfile,
 )
 from binance_algo.research.datasets.views import build_feature_view, build_target_view
 from binance_algo.research.panel import WORKER_DATASET_CACHE, PanelData
@@ -626,10 +627,13 @@ def run_research_validation(
     portfolio_policy: PortfolioPolicy,
     strategy_stress: Mapping[str, Strategy] | None = None,
     panel_data: PanelData | None = None,
+    profile: ValidationProfile = ValidationProfile.FULL,
 ) -> BacktestValidationResult:
     """Run the baseline and deterministic validation scenarios without persistence."""
 
     configured_strategy_stress = strategy_stress or {}
+    if profile is ValidationProfile.DISCOVERY and configured_strategy_stress:
+        raise ResearchError("discovery does not run additional strategy stress scenarios")
     if panel_data is None:
         feature_columns = tuple(
             dict.fromkeys(
@@ -665,14 +669,6 @@ def run_research_validation(
         cost_multiplier=1.5,
         panel_data=panel_data,
     )
-    cost_20 = run_walk_forward(
-        frame,
-        config=config,
-        strategy=strategy,
-        portfolio_policy=portfolio_policy,
-        cost_multiplier=2.0,
-        panel_data=panel_data,
-    )
     delay = run_walk_forward(
         frame,
         config=config,
@@ -682,11 +678,24 @@ def run_research_validation(
         panel_data=panel_data,
     )
     stress = {
-        "cost_1_0x": _metric_summary(baseline.metrics),
         "cost_1_5x": _metric_summary(cost_15.metrics),
-        "cost_2_0x": _metric_summary(cost_20.metrics),
         "signal_delay_1_bar": _metric_summary(delay.metrics),
     }
+    if profile is ValidationProfile.FULL:
+        cost_20 = run_walk_forward(
+            frame,
+            config=config,
+            strategy=strategy,
+            portfolio_policy=portfolio_policy,
+            cost_multiplier=2.0,
+            panel_data=panel_data,
+        )
+        stress = {
+            "cost_1_0x": _metric_summary(baseline.metrics),
+            "cost_1_5x": stress["cost_1_5x"],
+            "cost_2_0x": _metric_summary(cost_20.metrics),
+            "signal_delay_1_bar": stress["signal_delay_1_bar"],
+        }
     collisions = sorted(set(stress).intersection(configured_strategy_stress))
     if collisions:
         raise ResearchError(f"strategy stress names collide with engine stresses: {collisions}")
@@ -700,11 +709,15 @@ def run_research_validation(
                 panel_data=panel_data,
             ).metrics
         )
-    bootstrap = _block_bootstrap(
-        np.asarray(baseline.curve["net_return"].to_numpy(), dtype=np.float64),
-        samples=config.block_bootstrap_samples,
-        block_hours=config.block_bootstrap_hours,
-        seed=config.random_seed,
+    bootstrap = (
+        _block_bootstrap(
+            np.asarray(baseline.curve["net_return"].to_numpy(), dtype=np.float64),
+            samples=config.block_bootstrap_samples,
+            block_hours=config.block_bootstrap_hours,
+            seed=config.random_seed,
+        )
+        if profile is ValidationProfile.FULL
+        else {}
     )
     return BacktestValidationResult(
         run=baseline,
