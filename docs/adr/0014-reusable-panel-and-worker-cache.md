@@ -28,7 +28,9 @@ Parquet is loaded through a bounded, process-local LRU. The lazy scan projects o
 portfolio, accounting and available universe columns. Its key includes resolved path, size,
 modification time and projection. A process worker therefore loads a dataset once and reuses both
 the projected frame and immutable panel across its assigned trials. Validation scenarios and
-walk-forward folds receive array views from that same panel.
+walk-forward folds receive array views from that same panel. Workers always start with the
+cross-platform `spawn` context, avoiding inheritance of Polars/native thread state through a
+Linux `fork`.
 
 Keep the public `Strategy` and `PortfolioPolicy` DataFrame contracts stable in this increment.
 Their long-to-wide adapters are vectorized; the accounting path reuses `PanelData`. The small
