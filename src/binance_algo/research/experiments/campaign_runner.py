@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from dataclasses import dataclass
+from multiprocessing import get_context
 from pathlib import Path
 from typing import Any
 
@@ -224,7 +225,10 @@ class CampaignRunner:
                         )
                         break
             return failures
-        executor = ProcessPoolExecutor(max_workers=plan.source.runner.max_workers)
+        executor = ProcessPoolExecutor(
+            max_workers=plan.source.runner.max_workers,
+            mp_context=get_context("spawn"),
+        )
         futures = {executor.submit(_execute_trial_worker, request): request for request in requests}
         try:
             for future in as_completed(futures):
