@@ -72,6 +72,16 @@ uv run binance-algo --config configs/research.yaml research backtest
 uv run binance-algo --config configs/research.yaml research experiment list
 uv run binance-algo --config configs/research.yaml research experiment verify <experiment_id>
 uv run binance-algo --config configs/research.yaml research experiment rerun <experiment_id>
+uv run binance-algo --config configs/research.yaml research hypothesis create \
+  --file configs/hypotheses/residual_momentum_slow.yaml
+uv run binance-algo --config configs/research.yaml research campaign plan \
+  --file configs/experiments/smoke_residual_momentum.yaml
+uv run binance-algo --config configs/research.yaml research campaign run \
+  --file configs/experiments/smoke_residual_momentum.yaml
+uv run binance-algo --config configs/research.yaml research campaign status \
+  smoke_residual_momentum
+uv run binance-algo --config configs/research.yaml research campaign compare \
+  smoke_residual_momentum
 ```
 
 Durante o recorder, consulte `http://127.0.0.1:9108/health/live`, `/health/ready` e `/metrics`.

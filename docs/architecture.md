@@ -153,3 +153,20 @@ experiment/run. Uma única transação final registra métricas e artifacts e gr
 Scores e posições long-form são materializados somente pela policy `full`; o JSON legado da curva
 permanece apenas para a regressão do baseline. Factories explícitas rejeitam componentes e
 parâmetros não allowlisted.
+
+O PR 6 adiciona o coordenador local de campanhas:
+
+```text
+YAML estrito -> canonical campaign plan -> constraints -> immutable ExperimentSpecs
+                                                       |
+                                                       v
+                                      cache verify -> local process workers
+                                                       |
+                                                       v
+                         COMPLETED/PARTIAL/FAILED -> comparison de todos os trials
+```
+
+O coordenador registra definições e associações antes de executar. Cada worker abre sua conexão
+SQLite; não há conexão compartilhada ou infraestrutura distribuída. Resume reaproveita apenas
+sucessos íntegros e cria attempts novos para falhas. O report agregado é uma visão atômica e
+mutável sobre runs imutáveis, não uma fonte paralela de verdade.

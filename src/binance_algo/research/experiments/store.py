@@ -24,6 +24,7 @@ from binance_algo.research.experiments.migrations import (
     apply_migrations,
 )
 from binance_algo.research.experiments.models import (
+    CampaignStatus,
     ExperimentSpec,
     HypothesisSpec,
     HypothesisStatus,
@@ -60,6 +61,23 @@ HYPOTHESIS_TRANSITIONS: dict[HypothesisStatus, frozenset[HypothesisStatus]] = {
         {HypothesisStatus.READY, HypothesisStatus.INVALIDATED}
     ),
     HypothesisStatus.INVALIDATED: frozenset(),
+}
+
+CAMPAIGN_TRANSITIONS: dict[CampaignStatus, frozenset[CampaignStatus]] = {
+    CampaignStatus.PLANNED: frozenset({CampaignStatus.QUEUED, CampaignStatus.CANCELLED}),
+    CampaignStatus.QUEUED: frozenset({CampaignStatus.RUNNING, CampaignStatus.CANCELLED}),
+    CampaignStatus.RUNNING: frozenset(
+        {
+            CampaignStatus.COMPLETED,
+            CampaignStatus.PARTIAL,
+            CampaignStatus.FAILED,
+            CampaignStatus.CANCELLED,
+        }
+    ),
+    CampaignStatus.PARTIAL: frozenset({CampaignStatus.RUNNING}),
+    CampaignStatus.COMPLETED: frozenset(),
+    CampaignStatus.FAILED: frozenset(),
+    CampaignStatus.CANCELLED: frozenset(),
 }
 
 
@@ -115,6 +133,22 @@ class ResearchArtifactRecord:
     row_count: int | None
     size_bytes: int
     schema_version: int
+
+
+@dataclass(frozen=True, slots=True)
+class CampaignRecord:
+    campaign_id: str
+    name: str
+    description: str
+    hypothesis_id: str
+    spec_json: str
+    spec_sha256: str
+    status: CampaignStatus
+    created_at_ms: int
+    started_at_ms: int | None
+    finished_at_ms: int | None
+    trial_count: int
+    last_error: str | None
 
 
 class ResearchStore:
@@ -480,6 +514,201 @@ class ResearchStore:
         if row is None or (str(row[0]), str(row[1])) != (identifier, spec_json):
             raise ResearchStoreError(f"immutable experiment conflict: {identifier}")
         return identifier
+
+    def register_campaign(
+        self,
+        *,
+        identifier: str,
+        name: str,
+        description: str,
+        hypothesis_id: str,
+        spec_payload: Mapping[str, Any],
+        trial_count: int,
+    ) -> CampaignRecord:
+        if not identifier or not name or not description or trial_count < 0:
+            raise ResearchStoreError("campaign definition is incomplete")
+        try:
+            spec_json = orjson.dumps(spec_payload, option=orjson.OPT_SORT_KEYS).decode()
+        except (TypeError, orjson.JSONEncodeError) as exc:
+            raise ResearchStoreError(f"campaign spec is not serializable: {exc}") from exc
+        try:
+            with self.transaction() as connection:
+                connection.execute(
+                    """
+                    INSERT OR IGNORE INTO research_campaigns(
+                        campaign_id, name, description, hypothesis_id, spec_json,
+                        spec_sha256, status, created_at_ms, trial_count
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        identifier,
+                        name,
+                        description,
+                        hypothesis_id,
+                        spec_json,
+                        identifier,
+                        CampaignStatus.PLANNED.value,
+                        now_ms(),
+                        trial_count,
+                    ),
+                )
+                row = connection.execute(
+                    "SELECT * FROM research_campaigns WHERE campaign_id = ? OR name = ?",
+                    (identifier, name),
+                ).fetchone()
+        except sqlite3.Error as exc:
+            raise ResearchStoreError(f"cannot register campaign {name}: {exc}") from exc
+        if row is None:
+            raise ResearchStoreError(f"registered campaign disappeared: {name}")
+        record = self._campaign_from_row(row)
+        if any(
+            (
+                record.campaign_id != identifier,
+                record.name != name,
+                record.description != description,
+                record.hypothesis_id != hypothesis_id,
+                record.spec_json != spec_json,
+                record.spec_sha256 != identifier,
+                record.trial_count != trial_count,
+            )
+        ):
+            raise ResearchStoreError(f"immutable campaign conflict: {name}")
+        return record
+
+    def get_campaign(self, identifier_or_name: str) -> CampaignRecord | None:
+        try:
+            with closing(self._connect()) as connection:
+                row = connection.execute(
+                    "SELECT * FROM research_campaigns WHERE campaign_id = ? OR name = ?",
+                    (identifier_or_name, identifier_or_name),
+                ).fetchone()
+        except sqlite3.Error as exc:
+            raise ResearchStoreError(f"cannot read campaign {identifier_or_name}: {exc}") from exc
+        return self._campaign_from_row(row) if row is not None else None
+
+    def transition_campaign(
+        self,
+        identifier_or_name: str,
+        status: CampaignStatus,
+        *,
+        last_error: str | None = None,
+    ) -> CampaignRecord:
+        try:
+            with self.transaction() as connection:
+                row = connection.execute(
+                    "SELECT * FROM research_campaigns WHERE campaign_id = ? OR name = ?",
+                    (identifier_or_name, identifier_or_name),
+                ).fetchone()
+                if row is None:
+                    raise ResearchStoreError(f"unknown campaign: {identifier_or_name}")
+                current = CampaignStatus(str(row["status"]))
+                if status not in CAMPAIGN_TRANSITIONS[current]:
+                    raise InvalidResearchTransition(
+                        f"invalid campaign transition {current.value} -> {status.value}"
+                    )
+                timestamp = now_ms()
+                started_at = row["started_at_ms"]
+                if status is CampaignStatus.RUNNING and started_at is None:
+                    started_at = timestamp
+                finished_at = (
+                    timestamp
+                    if status
+                    in {
+                        CampaignStatus.COMPLETED,
+                        CampaignStatus.FAILED,
+                        CampaignStatus.CANCELLED,
+                    }
+                    else None
+                )
+                connection.execute(
+                    """
+                    UPDATE research_campaigns SET status = ?, started_at_ms = ?,
+                        finished_at_ms = ?, last_error = ? WHERE campaign_id = ?
+                    """,
+                    (
+                        status.value,
+                        started_at,
+                        finished_at,
+                        last_error,
+                        str(row["campaign_id"]),
+                    ),
+                )
+                updated = connection.execute(
+                    "SELECT * FROM research_campaigns WHERE campaign_id = ?",
+                    (str(row["campaign_id"]),),
+                ).fetchone()
+        except (ResearchStoreError, InvalidResearchTransition):
+            raise
+        except sqlite3.Error as exc:
+            raise ResearchStoreError(
+                f"cannot transition campaign {identifier_or_name}: {exc}"
+            ) from exc
+        assert updated is not None
+        return self._campaign_from_row(updated)
+
+    def associate_campaign_experiment(
+        self,
+        *,
+        campaign_id: str,
+        experiment_id_value: str,
+        ordinal: int,
+        tags: Mapping[str, Any] | None = None,
+    ) -> None:
+        tags_json = canonical_json_text(dict(tags or {}))
+        try:
+            with self.transaction() as connection:
+                connection.execute(
+                    """
+                    INSERT OR IGNORE INTO research_campaign_experiments(
+                        campaign_id, experiment_id, ordinal, tags_json
+                    ) VALUES (?, ?, ?, ?)
+                    """,
+                    (campaign_id, experiment_id_value, ordinal, tags_json),
+                )
+                row = connection.execute(
+                    """
+                    SELECT ordinal, tags_json FROM research_campaign_experiments
+                    WHERE campaign_id = ? AND experiment_id = ?
+                    """,
+                    (campaign_id, experiment_id_value),
+                ).fetchone()
+        except sqlite3.Error as exc:
+            raise ResearchStoreError(
+                f"cannot associate experiment {experiment_id_value} with {campaign_id}: {exc}"
+            ) from exc
+        if row is None or (int(row["ordinal"]), str(row["tags_json"])) != (
+            ordinal,
+            tags_json,
+        ):
+            raise ResearchStoreError(
+                f"immutable campaign experiment conflict: {campaign_id}/{experiment_id_value}"
+            )
+
+    def list_campaign_experiments(
+        self,
+        identifier_or_name: str,
+    ) -> tuple[tuple[int, str, Mapping[str, Any]], ...]:
+        campaign = self.get_campaign(identifier_or_name)
+        if campaign is None:
+            raise ResearchStoreError(f"unknown campaign: {identifier_or_name}")
+        try:
+            with closing(self._connect()) as connection:
+                rows = connection.execute(
+                    """
+                    SELECT ordinal, experiment_id, tags_json
+                    FROM research_campaign_experiments WHERE campaign_id = ?
+                    ORDER BY ordinal
+                    """,
+                    (campaign.campaign_id,),
+                ).fetchall()
+        except sqlite3.Error as exc:
+            raise ResearchStoreError(
+                f"cannot list campaign experiments for {identifier_or_name}: {exc}"
+            ) from exc
+        return tuple(
+            (int(row["ordinal"]), str(row["experiment_id"]), orjson.loads(str(row["tags_json"])))
+            for row in rows
+        )
 
     def get_experiment(self, identifier: str) -> ExperimentSpec | None:
         try:
@@ -1084,10 +1313,31 @@ class ResearchStore:
             created_at_ms=int(row["created_at_ms"]),
         )
 
+    @staticmethod
+    def _campaign_from_row(row: sqlite3.Row) -> CampaignRecord:
+        return CampaignRecord(
+            campaign_id=str(row["campaign_id"]),
+            name=str(row["name"]),
+            description=str(row["description"]),
+            hypothesis_id=str(row["hypothesis_id"]),
+            spec_json=str(row["spec_json"]),
+            spec_sha256=str(row["spec_sha256"]),
+            status=CampaignStatus(str(row["status"])),
+            created_at_ms=int(row["created_at_ms"]),
+            started_at_ms=(int(row["started_at_ms"]) if row["started_at_ms"] is not None else None),
+            finished_at_ms=(
+                int(row["finished_at_ms"]) if row["finished_at_ms"] is not None else None
+            ),
+            trial_count=int(row["trial_count"]),
+            last_error=str(row["last_error"]) if row["last_error"] is not None else None,
+        )
+
 
 __all__ = [
+    "CAMPAIGN_TRANSITIONS",
     "HYPOTHESIS_TRANSITIONS",
     "RUN_TRANSITIONS",
+    "CampaignRecord",
     "ExperimentRunRecord",
     "ResearchArtifactRecord",
     "ResearchMetricRecord",

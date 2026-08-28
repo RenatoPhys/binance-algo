@@ -2,13 +2,13 @@
 
 ## Estado do incremento
 
-Os PRs 1 a 5 estão implementados. O golden baseline permanece como referência e o motor agora
+Os PRs 1 a 6 estão implementados. O golden baseline permanece como referência e o motor agora
 recebe `Strategy` e `PortfolioPolicy`, usando treino e teste reais em cada fold. Residual momentum
 e neutral long/short são as primeiras implementações dos contratos. Feature/label registries,
 roles de schema, dataset views e fingerprint `lineage_v2` estão ativos. A CLI legada usa essa
 rota por meio de um adaptador explícito; não existe segundo motor. `ResearchStore`, experiment
-registry, code fingerprint, artifact pipeline e experiment runner estão ativos. Campaign runner,
-ledger, multiple-testing adjustment e promotion gates ainda não estão implementados e não devem
+registry, code fingerprint, artifact pipeline, experiment runner e campaign runner estão ativos.
+Ledger, multiple-testing adjustment e promotion gates ainda não estão implementados e não devem
 ser simulados por scripts ad hoc.
 
 ## Fronteiras arquiteturais
@@ -143,10 +143,28 @@ recalcula checksums, sizes, row counts e `result_digest`; `experiment rerun` cri
 exige digest idêntico ao sucesso anterior. O SVG opt-in e o manifest operacional são verificados,
 mas não alteram o digest científico.
 
+## Campaign planner e runner
+
+O schema YAML é estrito e aceita grid cartesiano determinístico para strategy/portfolio,
+parâmetros fixos, constraints de soma, `max_trials`, policy de artifacts e controle local de
+workers. O planner resolve o manifest para `DatasetIdentity`; o path fica apenas no payload
+operacional armazenado para resume. Formatação/comentários YAML e relocação de conteúdo idêntico
+não alteram IDs.
+
+`campaign plan` e `campaign run --dry-run` não persistem estado. `campaign run` registra primeiro
+todos os trials válidos e então usa processos locais com conexões SQLite independentes. Cache hit
+exige run `SUCCEEDED` e verificação integral dos artifacts. Falhas ficam isoladas quando
+`fail_fast=false`; uma campanha `PARTIAL` pode ser retomada sem repetir sucessos. O compare agrega
+todos os trials em Parquet/JSON/Markdown e mantém resultados negativos visíveis.
+
+O smoke `configs/experiments/smoke_residual_momentum.yaml` possui nove combinações possíveis,
+três válidas e seis removidas pela constraint de soma dos pesos. Gráficos permanecem desligados e
+os artifacts usam policy `summary`.
+
 ## Próximos incrementos
 
-1. criar campaign planner/runner com resume e cache;
-2. adicionar ledger, ablações, robustez, multiple testing e promotion gates;
+1. adicionar ledger e ablações;
+2. adicionar robustez, multiple testing e promotion gates;
 3. otimizar o painel e concluir documentação/aceite.
 
 Nenhuma campanha extensa deve ser executada antes de existirem separação, registry, artifacts e
