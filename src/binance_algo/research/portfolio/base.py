@@ -6,7 +6,8 @@ from typing import Protocol, runtime_checkable
 
 import polars as pl
 
-from binance_algo.research.contracts import FoldContext
+from binance_algo.research.contracts import FoldContext, StrategyScores
+from binance_algo.research.panel import PanelData
 
 
 @runtime_checkable
@@ -38,4 +39,17 @@ class PortfolioPolicy(Protocol):
         ...
 
 
-__all__ = ["PortfolioPolicy"]
+@runtime_checkable
+class PanelPortfolioPolicy(Protocol):
+    """Optional fast path for portfolio construction from a shared panel."""
+
+    def target_weights_panel(
+        self,
+        scores: StrategyScores,
+        market_state: PanelData,
+        *,
+        context: FoldContext,
+    ) -> pl.DataFrame: ...
+
+
+__all__ = ["PanelPortfolioPolicy", "PortfolioPolicy"]

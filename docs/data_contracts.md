@@ -178,6 +178,34 @@ exatamente pela chave. A implementação neutral long/short v1 exige `rolling_be
 O painel de pesos precisa cobrir as mesmas decisões/símbolos do teste. O engine pode atrasar o
 painel para stress de sinal, mas não permite que a política leia `future_*` ou `outcome_*`.
 
+## PanelData — Fase 3.5 contract version 1
+
+`PanelData` é a representação interna densa e reutilizável. `times` é `Int64`, estritamente
+crescente; `symbols` é uma tupla ordenada e tem mapa estável para índice. Todas as matrizes têm
+shape `(len(times), len(symbols))`, são read-only e pertencem a exatamente um namespace:
+
+| Namespace | Conteúdo |
+|---|---|
+| `features` | inputs causais declarados por strategy/portfolio |
+| `outcomes` | retornos, funding e volume observados após a decisão |
+| `metadata` | timestamps, regime e estado de universo/qualidade |
+| `availability` | máscara booleana final por símbolo e decisão |
+
+Chaves nulas/duplicadas, shapes divergentes e valores não finitos em campos obrigatórios de uma
+célula disponível falham explicitamente. Painel parcial preserva o timestamp e marca a célula;
+não derruba silenciosamente toda a seção cross-sectional.
+
+Os campos internos de universo são `is_available`, `exclusion_reason`, `listing_time_ms`,
+`delisting_time_ms`, `lookback_complete`, `quality_passed` e `liquidity_eligible`. Quando o
+dataset fixo atual não traz listing/delisting, `-1` significa desconhecido. Inclusão no dataset
+atual permite defaults estruturais de quality/liquidity, mas esses valores não constituem
+histórico point-in-time e não podem fundamentar campanhas de universo dinâmico.
+
+O loader faz `scan_parquet` e projeta somente chaves, dependências declaradas, campos contábeis e
+metadata de universo realmente disponível no schema. A entrada do cache por worker é invalidada
+por mudança de path, tamanho, `mtime` ou projeção. Frame e painel são reutilizados; parâmetros de
+trial não provocam novo cálculo das features materializadas.
+
 ## Research registry — schema version 2
 
 O banco `research.sqlite3` possui migrations próprias e 12 tabelas de domínio:

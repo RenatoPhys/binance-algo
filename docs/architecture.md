@@ -204,3 +204,32 @@ all campaign trials + verified segmented artifacts
 Eventos `BLOCKED` não movem o estágio; `APPROVED`, `REJECTED` e `INVALIDATED` seguem transições
 explícitas. O experimento nunca é reescrito. A Fase 4 só poderá consumir o ID completo de um
 `PHASE4_CANDIDATE` após lockbox independente.
+
+O PR 9 separa a materialização point-in-time da execução de parâmetros:
+
+```text
+Parquet -> scan + column projection -> worker-local LRU
+                                           |
+                                           +-> projected DataFrame (contract views)
+                                           |
+                                           +-> immutable PanelData
+                                                |-- features
+                                                |-- outcomes
+                                                |-- metadata
+                                                `-- availability mask
+                                                        |
+                            shared by trials/folds/stress accounting
+```
+
+A chave do cache inclui path resolvido, tamanho, `mtime` e projeção; logo conteúdo ou conjunto de
+colunas diferente não reutiliza uma entrada incompatível. Cada processo mantém no máximo duas
+entradas e não compartilha conexão SQLite ou memória mutável com outro worker. O engine recebe o
+mesmo painel nos cenários baseline, custos e atraso, obtendo views temporais read-only. Conversões
+long/wide, score cross-sectional e materialização de scores/posições não iteram linhas Python; o
+loop por período da política permanece porque o no-trade band depende do estado anterior.
+
+`PanelData` já representa disponibilidade parcial sem eliminar um timestamp inteiro, mas isso é
+capacidade estrutural, não autorização para simular um universo dinâmico. O dataset atual só prova
+o seed fixado ex ante. `listing_time_ms=-1` e `delisting_time_ms=-1` significam desconhecido;
+quality/liquidity defaults apenas refletem que uma linha já passou pelo builder atual. Uma futura
+campanha dinâmica exige snapshots históricos genuínos antes do uso.

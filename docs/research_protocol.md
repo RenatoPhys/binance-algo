@@ -1,4 +1,4 @@
-# Protocolo de pesquisa — Fase 3
+# Protocolo de pesquisa — Fase 3.5
 
 ## Semântica temporal
 
@@ -79,3 +79,23 @@ nem reprovação.
 Promoção exige proveniência Git limpa tanto no experimento quanto no código que toma a decisão.
 O histórico atual é development OOS, não lockbox. Sem manifest/período independente, o gate
 registra `NOT_AVAILABLE` e `PHASE4_CANDIDATE` permanece impossível.
+
+## Execução em escala local
+
+O dataset point-in-time é materializado antes do sweep. Cada worker usa lazy scan com projeção de
+colunas e conserva um `PanelData` read-only; trials que mudam somente parâmetros reutilizam as
+mesmas features/outcomes. Baseline, custos e atraso compartilham o painel e fatiam views temporais.
+Runtime de cada attempt fica no registry; o benchmark separado mede também memória aproximada e
+tamanho dos artifacts sem estabelecer SLA de CI.
+
+O `availability` prepara exclusão localizada, mas não resolve survivorship bias por si só. Até
+existirem snapshots históricos de listing, delisting, qualidade e liquidez, campanhas oficiais
+devem continuar no universo fixado ex ante. É proibido usar o estado atual da exchange para
+reconstruir composição histórica.
+
+## Próximas hipóteses permitidas
+
+Com a infraestrutura concluída, podem começar screenings pequenos e pré-registrados de momentum
+mais lento (4h–168h), funding carry e mean reversion residual. Cada família deve ser uma strategy
+versionada distinta, passar pelo registry/campaign/ledger e permanecer development OOS. Nenhuma
+está apta à Fase 4 sem estabilidade líquida, correção por múltiplos testes e lockbox independente.

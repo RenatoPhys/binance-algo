@@ -7,6 +7,7 @@ from typing import Protocol, runtime_checkable
 import polars as pl
 
 from binance_algo.research.contracts import FoldContext, StrategyScores, TrainingDataset
+from binance_algo.research.panel import PanelData
 
 
 @runtime_checkable
@@ -55,4 +56,24 @@ class Strategy(Protocol):
         ...
 
 
-__all__ = ["FittedStrategy", "Strategy"]
+@runtime_checkable
+class PanelFittedStrategy(Protocol):
+    """Optional fast path for scoring a shared immutable panel."""
+
+    def score_panel(self, features: PanelData, *, context: FoldContext) -> StrategyScores: ...
+
+
+@runtime_checkable
+class PanelStrategy(Protocol):
+    """Optional fast path for fitting from a shared immutable panel."""
+
+    def fit_panel(
+        self,
+        train: PanelData,
+        *,
+        target: pl.DataFrame | None,
+        context: FoldContext,
+    ) -> FittedStrategy: ...
+
+
+__all__ = ["FittedStrategy", "PanelFittedStrategy", "PanelStrategy", "Strategy"]

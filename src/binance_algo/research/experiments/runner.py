@@ -12,13 +12,16 @@ from pathlib import Path
 from typing import Any, cast
 
 import orjson
-import polars as pl
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from binance_algo.common.errors import ResearchError
 from binance_algo.config import FeeScheduleConfig, ResearchConfig
 from binance_algo.data.storage import LocalFilesystemStorage
-from binance_algo.research.backtest import run_research_validation
+from binance_algo.research.backtest import (
+    ACCOUNTING_METADATA_FIELDS,
+    ACCOUNTING_OUTCOME_FIELDS,
+    run_research_validation,
+)
 from binance_algo.research.datasets.references import (
     DatasetReference,
     load_dataset_reference,
@@ -46,6 +49,7 @@ from binance_algo.research.experiments.provenance import build_code_fingerprint
 from binance_algo.research.experiments.store import ExperimentRunRecord, ResearchStore
 from binance_algo.research.features.registry import phase3_feature_set
 from binance_algo.research.labels.forward_returns import GROSS_FORWARD_RETURN_1H
+from binance_algo.research.panel import WORKER_DATASET_CACHE
 from binance_algo.research.portfolio.registry import build_portfolio_policy
 from binance_algo.research.strategies.registry import build_strategy
 
@@ -290,7 +294,6 @@ class ExperimentRunner:
         artifact_directory: Path | None = None
         try:
             dataset_path = resolve_dataset_path(self.data_root, spec.dataset_reference)
-            frame = pl.read_parquet(dataset_path)
             strategy = build_strategy(
                 spec.strategy.component_id,
                 spec.strategy.version,
@@ -301,12 +304,23 @@ class ExperimentRunner:
                 spec.portfolio_policy.version,
                 spec.portfolio_parameters,
             )
+            loaded_dataset = WORKER_DATASET_CACHE.load(
+                dataset_path,
+                feature_columns=tuple(
+                    dict.fromkeys(
+                        (*strategy.required_features(), *portfolio_policy.required_features())
+                    )
+                ),
+                outcome_columns=ACCOUNTING_OUTCOME_FIELDS,
+                metadata_columns=ACCOUNTING_METADATA_FIELDS,
+            )
             config = _execution_config(spec, self.research_config)
             validation = run_research_validation(
-                frame,
+                loaded_dataset.frame,
                 config=config,
                 strategy=strategy,
                 portfolio_policy=portfolio_policy,
+                panel_data=loaded_dataset.panel,
             )
             bundle = self.pipeline.persist(
                 experiment_id=identifier,
