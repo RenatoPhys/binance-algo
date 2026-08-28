@@ -257,7 +257,7 @@ class ArchiveDownloader:
         self, targets: Sequence[ArchiveTarget], *, ingestion_run_id: str
     ) -> list[ArchiveDownloadResult]:
         async with aiohttp.ClientSession(
-            headers={"User-Agent": "binance-algo/0.2 public-archive"}
+            headers={"User-Agent": "binance-algo/0.3 public-archive"}
         ) as session:
             tasks = [
                 self._guarded_download(session, target, ingestion_run_id=ingestion_run_id)

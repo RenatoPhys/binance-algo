@@ -51,6 +51,7 @@ class BinanceConfig(StrictModel):
 class StorageConfig(StrictModel):
     root: Path = Path("var/data")
     state_db: Path = Path("var/state/ingestion.sqlite3")
+    duckdb: Path = Path("var/state/market_data.duckdb")
     reports_root: Path = Path("var/reports")
     parquet_compression: Literal["zstd", "snappy"] = "zstd"
     micro_batch_max_rows: int = Field(default=25_000, gt=0)
@@ -158,6 +159,11 @@ class Settings(StrictModel):
     @property
     def state_db_path(self) -> Path:
         path = self.storage.state_db
+        return path if path.is_absolute() else self.project_root / path
+
+    @property
+    def duckdb_path(self) -> Path:
+        path = self.storage.duckdb
         return path if path.is_absolute() else self.project_root / path
 
     @property

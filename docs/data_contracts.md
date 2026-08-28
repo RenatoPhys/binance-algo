@@ -59,3 +59,29 @@ O ZIP e seu `.CHECKSUM` são preservados em `raw_archives`. O ZIP deve conter ex
 flat, sem symlink ou path traversal, com o cabeçalho oficial de 12 colunas. O row count persistido
 é o número de linhas de dados; não se impõe 1.440 para que gaps e dias parciais permaneçam
 observáveis na auditoria seguinte.
+
+## klines — schema version 1
+
+Chave lógica: `symbol + interval + open_time_ms`.
+
+| Campo | Tipo Parquet | Semântica |
+|---|---:|---|
+| symbol, interval | String | Série canônica |
+| open_time_ms, close_time_ms | Int64 | Limites do candle em epoch UTC |
+| open, high, low, close | Float64 | OHLC observado |
+| base_volume, quote_volume | Float64 | Volumes totais |
+| trade_count | Int64 | Número de trades |
+| taker_buy_base_volume, taker_buy_quote_volume | Float64 | Volumes taker buy |
+| is_closed | Boolean | `true` para archive histórico fechado |
+| ingested_at_ns | Int64 | Timestamp determinístico herdado da ingestão raw |
+| source | String | `binance_public_data` |
+| schema_version | Int32 | `1` |
+
+A normalização converte tipos estritamente, deduplica pela chave conservando a primeira linha e
+ordena pela chave. O Parquet bronze referencia o `file_id` raw em `parent_file_ids_json`; seu nome
+incorpora o checksum da origem.
+
+O gate de qualidade registra row count, timestamps mínimo/máximo, nulos, duplicatas, desordem,
+gaps e duração, preços/quantidades negativos, OHLC inválido, close time inválido, timestamps
+desalinhados, candles abertos, checksum, schema e status de comparação com outra fonte. Gaps são
+contados também entre partições diárias.

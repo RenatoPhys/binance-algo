@@ -19,6 +19,7 @@ binance:
 storage:
   root: var/data
   state_db: var/state/ingestion.sqlite3
+  duckdb: var/state/market_data.duckdb
   reports_root: var/reports
   parquet_compression: zstd
   micro_batch_max_rows: 25000

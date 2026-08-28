@@ -31,3 +31,7 @@ class InvalidStateTransition(StateStoreError):
 
 class ArchiveError(BinanceAlgoError):
     """An official public archive could not be downloaded or validated."""
+
+
+class DataQualityError(BinanceAlgoError):
+    """Normalized market data violates its canonical contract or quality gate."""

@@ -1,6 +1,6 @@
 # Arquitetura
 
-O data plane implementado até o state store e archive downloader é:
+O data plane histórico implementado é:
 
 ```text
 YAML + env allowlist
@@ -15,6 +15,12 @@ Binance Public Data -> .CHECKSUM -> ZIP .part/resume -> SHA-256 -> ZIP/CSV valid
                               |                                  |
                               v                                  v
                      SQLite WAL manifest <-------------- raw archive + CSV
+                              |                                  |
+                              v                                  v
+                     lineage + schema v1 <---- canonical Parquet (bronze)
+                              |                                  |
+                              v                                  v
+                    quality_results <--- audit + DuckDB view `klines`
 ```
 
 O adapter Binance é fino e explícito: lifecycle da sessão, timeout, classificação de erro,
@@ -32,5 +38,15 @@ O archive downloader limita concorrência, tamanho comprimido/descomprimido e re
 parciais permanecem em `.part`; arquivos divergentes são movidos para quarantine, sem
 sobrescrever silenciosamente o raw observado.
 
-Research plane e trading plane não existem neste PR. A separação física será ampliada quando
+O normalizador deriva `ingested_at_ns` do manifesto raw para produzir conteúdo determinístico,
+remove duplicatas pela chave canônica conservando a primeira linha e ordena antes da promoção.
+O nome do Parquet inclui o prefixo do checksum raw e a escrita imutável impede substituição
+silenciosa. A política para detectar e versionar correções upstream continua explicitamente
+pendente.
+
+A auditoria valida schema, checksum, nulidade, ordem, unicidade, alinhamento temporal,
+continuidade e invariantes de mercado por arquivo e no range agregado. A view DuckDB é recriada a
+partir da lista explícita de arquivos `NORMALIZED`, não de uma varredura cega do filesystem.
+
+Research plane e trading plane ainda não existem. A separação física será ampliada quando
 houver entregáveis reais; não foram criadas árvores de arquivos vazios.

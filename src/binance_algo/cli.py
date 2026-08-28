@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import dataclass, replace
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Annotated, NoReturn
 
@@ -11,7 +12,7 @@ import typer
 from rich.console import Console
 from rich.table import Table
 
-from binance_algo.common.errors import BinanceAlgoError
+from binance_algo.common.errors import BinanceAlgoError, DataQualityError
 from binance_algo.config import Settings, load_settings
 from binance_algo.data.archive_client import (
     ArchiveDownloader,
@@ -26,8 +27,20 @@ from binance_algo.data.backfill import (
     parse_symbols,
     write_download_report,
 )
-from binance_algo.data.manifest import BackfillJobRecord, BackfillJobStatus, now_ms
+from binance_algo.data.catalog import rebuild_kline_catalog
+from binance_algo.data.manifest import (
+    BackfillJobRecord,
+    BackfillJobStatus,
+    DataFileStatus,
+    now_ms,
+)
 from binance_algo.data.metadata import MetadataSnapshotService
+from binance_algo.data.normalize import (
+    KlineNormalizer,
+    NormalizeOutcome,
+    write_normalization_report,
+)
+from binance_algo.data.quality import audit_kline_files, write_quality_report
 from binance_algo.data.state_store import StateStore
 from binance_algo.data.storage import LocalFilesystemStorage
 from binance_algo.data.universe import (
@@ -44,9 +57,11 @@ app = typer.Typer(help="Auditable Binance USD-M Futures public-data foundation."
 exchange_info_app = typer.Typer(help="Snapshot and inspect exchange metadata.")
 universe_app = typer.Typer(help="Build point-in-time research universes.")
 backfill_app = typer.Typer(help="Download official historical public archives.")
+data_app = typer.Typer(help="Normalize, catalog, and audit canonical market data.")
 app.add_typer(exchange_info_app, name="exchange-info")
 app.add_typer(universe_app, name="universe")
 app.add_typer(backfill_app, name="backfill")
+app.add_typer(data_app, name="data")
 console = Console()
 
 
@@ -314,6 +329,161 @@ def backfill_klines(
         json_report=str(json_report),
     )
     if final_job.status is BackfillJobStatus.FAILED:
+        raise typer.Exit(code=1)
+
+
+def _date_range_ms(start: str, end: str) -> tuple[int, int]:
+    start_date = parse_date(start, option="--start")
+    end_date = parse_date(end, option="--end")
+    if end_date < start_date:
+        raise typer.BadParameter("--end must be on or after --start")
+    start_ms = int(
+        datetime.combine(start_date, datetime.min.time(), tzinfo=UTC).timestamp() * 1_000
+    )
+    end_ms = (
+        int(
+            (
+                datetime.combine(end_date, datetime.min.time(), tzinfo=UTC) + timedelta(days=1)
+            ).timestamp()
+            * 1_000
+        )
+        - 1
+    )
+    return start_ms, end_ms
+
+
+@data_app.command("normalize")
+def data_normalize(
+    ctx: typer.Context,
+    start: Annotated[str, typer.Option(help="Inclusive UTC start date as YYYY-MM-DD.")],
+    end: Annotated[str, typer.Option(help="Inclusive UTC end date as YYYY-MM-DD.")],
+    dataset: Annotated[
+        str, typer.Option(help="Logical dataset; currently only klines.")
+    ] = "klines",
+    symbols: Annotated[str, typer.Option(help="Comma-separated USD-M symbols.")] = (
+        "BTCUSDT,ETHUSDT,SOLUSDT"
+    ),
+    interval: Annotated[str, typer.Option(help="Kline interval; currently only 1m.")] = "1m",
+) -> None:
+    """Normalize validated archives to canonical immutable Parquet and refresh DuckDB."""
+
+    try:
+        if dataset != "klines":
+            raise typer.BadParameter("the current normalization supports only dataset klines")
+        settings = _settings(ctx)
+        _configure(settings)
+        parsed_symbols = parse_symbols(symbols)
+        start_ms, end_ms = _date_range_ms(start, end)
+        state_store = StateStore(settings.state_db_path)
+        state_store.initialize()
+        raw_records = state_store.list_data_files(
+            logical_dataset="klines",
+            layer="raw_archives",
+            statuses={DataFileStatus.VALIDATED, DataFileStatus.NORMALIZED},
+            symbols=parsed_symbols,
+            interval=interval,
+            start_time_ms=start_ms,
+            end_time_ms=end_ms,
+        )
+        if not raw_records:
+            raise DataQualityError("no validated raw archives match the requested range")
+        normalizer = KlineNormalizer(
+            storage=LocalFilesystemStorage(settings.data_root),
+            state_store=state_store,
+            compression=settings.storage.parquet_compression,
+            max_uncompressed_bytes=settings.archives.max_uncompressed_bytes,
+            chunk_bytes=settings.archives.chunk_bytes,
+        )
+        results = normalizer.normalize_many(raw_records)
+        json_report, markdown_report = write_normalization_report(
+            results=results, reports_root=settings.reports_root
+        )
+        catalog_records = state_store.list_data_files(
+            logical_dataset="klines",
+            layer="bronze",
+            statuses={DataFileStatus.NORMALIZED},
+        )
+        catalog = rebuild_kline_catalog(database_path=settings.duckdb_path, records=catalog_records)
+    except BinanceAlgoError as exc:
+        _fail(exc)
+
+    failed = sum(result.outcome is NormalizeOutcome.FAILED for result in results)
+    normalized = sum(result.outcome is NormalizeOutcome.NORMALIZED for result in results)
+    skipped = sum(result.outcome is NormalizeOutcome.SKIPPED for result in results)
+    console.print(
+        f"Normalization: {normalized} normalized, {skipped} skipped, {failed} failed\n"
+        f"DuckDB: {catalog.database_path} ({catalog.row_count} rows in {catalog.view_name})\n"
+        f"Reports: {json_report}\n         {markdown_report}"
+    )
+    if failed:
+        raise typer.Exit(code=1)
+
+
+@data_app.command("audit")
+def data_audit(
+    ctx: typer.Context,
+    start: Annotated[str, typer.Option(help="Inclusive UTC start date as YYYY-MM-DD.")],
+    end: Annotated[str, typer.Option(help="Inclusive UTC end date as YYYY-MM-DD.")],
+    dataset: Annotated[
+        str, typer.Option(help="Logical dataset; currently only klines.")
+    ] = "klines",
+    symbols: Annotated[str, typer.Option(help="Comma-separated USD-M symbols.")] = (
+        "BTCUSDT,ETHUSDT,SOLUSDT"
+    ),
+    interval: Annotated[str, typer.Option(help="Kline interval; currently only 1m.")] = "1m",
+) -> None:
+    """Audit schema, checksums, uniqueness, order, continuity, and market invariants."""
+
+    try:
+        if dataset != "klines":
+            raise typer.BadParameter("the current audit supports only dataset klines")
+        settings = _settings(ctx)
+        _configure(settings)
+        parsed_symbols = parse_symbols(symbols)
+        start_ms, end_ms = _date_range_ms(start, end)
+        state_store = StateStore(settings.state_db_path)
+        state_store.initialize()
+        records = state_store.list_data_files(
+            logical_dataset="klines",
+            layer="bronze",
+            statuses={DataFileStatus.NORMALIZED},
+            symbols=parsed_symbols,
+            interval=interval,
+            start_time_ms=start_ms,
+            end_time_ms=end_ms,
+        )
+        report = audit_kline_files(
+            records,
+            state_store=state_store,
+            start_time_ms=start_ms,
+            end_time_ms=end_ms,
+            expected_symbols=parsed_symbols,
+        )
+        json_report, markdown_report = write_quality_report(
+            report=report, reports_root=settings.reports_root
+        )
+    except BinanceAlgoError as exc:
+        _fail(exc)
+
+    table = Table(title=f"kline quality gate: {'PASS' if report.passed else 'FAIL'}")
+    table.add_column("symbol")
+    table.add_column("rows", justify="right")
+    table.add_column("duplicates", justify="right")
+    table.add_column("gaps", justify="right")
+    table.add_column("invalid OHLC", justify="right")
+    table.add_column("gate")
+    for item in report.aggregate:
+        table.add_row(
+            item.symbol,
+            str(item.row_count),
+            str(item.duplicate_key_count),
+            str(item.gap_count),
+            str(item.invalid_ohlc_count),
+            "PASS" if item.passed else "FAIL",
+        )
+    console.print(table)
+    console.print(f"Reports: {json_report}\n         {markdown_report}")
+    if not report.passed:
         raise typer.Exit(code=1)
 
 

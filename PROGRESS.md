@@ -2,7 +2,7 @@
 
 ## Current milestone
 
-Fase 1 — state store e archive downloader de klines 1m.
+Fase 2 — recorder WebSocket e replay determinístico de market data.
 
 ## Completed
 
@@ -19,11 +19,15 @@ Fase 1 — state store e archive downloader de klines 1m.
 - [x] Downloader daily de klines 1m com concorrência limitada
 - [x] SHA-256 oficial, retomada HTTP Range e extração segura
 - [x] Relatórios JSON/Markdown e idempotência em rerun
+- [x] Normalização canônica CSV para Parquet com schema versionado e lineage
+- [x] Deduplicação determinística e ordenação pela chave canônica
+- [x] Auditoria por partição e range de gaps, schema, checksum e invariantes
+- [x] Catálogo DuckDB persistente com view `klines`
+- [x] Backfill de 90 dias para BTCUSDT, ETHUSDT e SOLUSDT
+- [x] Gate histórico da Fase 1 aprovado e rerun integral idempotente
 
 ## Pending
 
-- [ ] Normalização e auditoria das klines
-- [ ] Backfill completo de 90 dias para os três símbolos
 - [ ] Recorder WebSocket e replay
 
 ## Blockers
@@ -37,17 +41,21 @@ Fase 1 — state store e archive downloader de klines 1m.
 - `uv sync`: passed; lockfile com 59 packages
 - `ruff format --check .`: passed
 - `ruff check .`: passed
-- `mypy src`: passed; 22 source files
-- `pytest -m "not network"`: 28 passed, 2 deselected
-- `pytest -m network`: 2 passed, 28 deselected
+- `mypy src`: passed; 25 source files
+- `pytest -m "not network"`: 33 passed, 2 deselected
+- `pytest -m network`: 2 passed, 33 deselected
 - `binance-algo doctor`: todos os checks passaram; SQLite `journal_mode=wal`
 - `exchange-info snapshot`: 733 instrumentos persistidos
 - DuckDB: 733 linhas, 733 símbolos distintos, zero filtros tick/step ausentes
 - `universe build`: BTCUSDT, ETHUSDT e SOLUSDT; rerun manteve a versão
   `3d3e2f79aef8de4e`
-- archive smoke: BTCUSDT, ETHUSDT e SOLUSDT em 2026-08-25, 3 × 1.440 linhas,
-  187.382 bytes, zero falhas
-- archive rerun: 3 `skipped`, zero bytes baixados, três manifests `VALIDATED`
+- archive 90d: 2026-05-28 a 2026-08-25, 270 arquivos, 388.800 linhas; 267 downloads
+  novos, 3 skips, 15.878.389 bytes e zero falhas
+- normalização: 270 Parquets e 388.800 linhas; zero falhas
+- quality gate: 129.600 linhas por símbolo, zero gaps, duplicatas, desordem, nulos,
+  preços/quantidades negativos ou OHLC inválido; schema e checksum passaram
+- DuckDB: view `klines` com 388.800 linhas
+- rerun integral: 270 archives e 270 Parquets `skipped`, zero bytes baixados e row count estável
 - checksum contract BTCUSDT: `1651da32387a1342bdba15b28504dc4d55caee905a58fec04f52c280b1d69f7f`
 
 ## Risks and mitigations
@@ -67,6 +75,6 @@ Fase 1 — state store e archive downloader de klines 1m.
 - Universo inicial limitado a BTCUSDT, ETHUSDT e SOLUSDT
 - Downloader atual cobre apenas arquivos daily de klines 1m; monthly e outros datasets virão em
   incrementos posteriores
-- O smoke real cobriu um dia; a janela de aceite de 90 dias permanece pendente
-- Sem normalização Parquet, auditoria de gaps ou views DuckDB para klines
-- Sem WebSocket, backtest, estratégia, autenticação ou envio de ordens
+- O histórico validado cobre 90 dias; ranges maiores e arquivos monthly ainda não foram testados
+- A comparação cruzada com uma segunda fonte permanece `NOT_RUN`
+- Sem WebSocket, replay, backtest, estratégia, autenticação ou envio de ordens

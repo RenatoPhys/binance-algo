@@ -2,8 +2,8 @@
 
 Infraestrutura auditável para dados públicos da Binance USDⓈ-M Futures. O data plane atual
 implementa configuração, diagnóstico, REST público, snapshots de `exchangeInfo`, universo seed,
-state store SQLite e backfill idempotente dos arquivos oficiais de klines 1m. Não há estratégia,
-WebSocket, autenticação, backtest ou envio de ordens.
+state store SQLite, backfill idempotente, Parquet canônico, auditoria e catálogo DuckDB para
+klines 1m. Não há estratégia, WebSocket, autenticação, backtest ou envio de ordens.
 
 ## Segurança por padrão
 
@@ -46,7 +46,13 @@ uv run binance-algo doctor
 uv run binance-algo exchange-info snapshot
 uv run binance-algo universe build
 uv run binance-algo backfill klines --symbols BTCUSDT,ETHUSDT,SOLUSDT \
-  --interval 1m --start 2026-08-25 --end 2026-08-25
+  --interval 1m --start 2026-05-28 --end 2026-08-25
+uv run binance-algo data normalize --dataset klines \
+  --symbols BTCUSDT,ETHUSDT,SOLUSDT --interval 1m \
+  --start 2026-05-28 --end 2026-08-25
+uv run binance-algo data audit --dataset klines \
+  --symbols BTCUSDT,ETHUSDT,SOLUSDT --interval 1m \
+  --start 2026-05-28 --end 2026-08-25
 ```
 
 Para um cutoff explícito:
@@ -67,17 +73,27 @@ var/data/gold/binance/usdm/universe/version=<hash>/as_of=YYYY-MM-DD/*
 var/data/raw_archives/binance/usdm/klines/<symbol>/1m/*.zip
 var/data/raw_archives/binance/usdm/klines/<symbol>/1m/*.CHECKSUM
 var/data/raw_archives/binance/usdm/klines/<symbol>/1m/extracted/*.csv
+var/data/bronze/binance/usdm/klines/date=YYYY-MM-DD/symbol=<symbol>/*.parquet
 var/state/ingestion.sqlite3
+var/state/market_data.duckdb
 var/reports/downloads_*.{json,md}
+var/reports/normalization_*.{json,md}
+var/reports/data_quality_*.{json,md}
 ```
 
 Raw e bronze são imutáveis. A escrita passa por arquivo temporário, `fsync`, leitura de validação
 e promoção atômica. Archives exigem SHA-256 oficial, ZIP seguro, CRC, cabeçalho e largura de linha
 válidos antes do estado `VALIDATED`. Downloads parciais usam `.part` e HTTP Range na retomada;
-reruns de arquivos válidos não acessam a rede.
+reruns de arquivos válidos não acessam a rede. O Parquet usa schema versionado e lineage até o
+ZIP de origem; a chave `symbol + interval + open_time_ms` é deduplicada de forma determinística.
 
 As datas de backfill são dias UTC inclusivos. Como os arquivos diários são publicados no dia
 seguinte, o CLI rejeita datas dentro da janela de publicação configurada.
+
+`data audit` falha com status não zero quando encontra checksum ou schema divergente, nulos,
+desordem, duplicatas, gaps, timestamps desalinhados, preços/quantidades negativos, candle aberto
+ou OHLC inválido. A view persistente `klines` do DuckDB aponta somente para arquivos
+`NORMALIZED` presentes no manifesto.
 
 ## Configuração
 
@@ -112,6 +128,5 @@ O volume `./var` preserva datasets locais. A imagem fixa as duas flags de segura
 
 ## Próximo marco
 
-Normalizar os CSVs de klines para Parquet canônico, deduplicar, auditar gaps/invariantes e criar
-views DuckDB e relatórios de qualidade. WebSocket, alpha e execução permanecem fora de escopo até
-os respectivos critérios de qualidade de dados serem satisfeitos.
+Recorder WebSocket de market data com micro-batches, checkpoints, reconexão e replay
+determinístico. Alpha e execução permanecem fora de escopo até seus respectivos gates.

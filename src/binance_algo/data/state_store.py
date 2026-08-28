@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import sqlite3
 from collections.abc import Iterator
 from contextlib import contextmanager
@@ -207,6 +208,104 @@ class StateStore:
         except sqlite3.Error as exc:
             raise StateStoreError(f"cannot read data file {file_id}: {exc}") from exc
         return self._data_file_from_row(row) if row is not None else None
+
+    def list_data_files(
+        self,
+        *,
+        logical_dataset: str | None = None,
+        layer: str | None = None,
+        statuses: set[DataFileStatus] | None = None,
+        symbols: tuple[str, ...] | None = None,
+        interval: str | None = None,
+        start_time_ms: int | None = None,
+        end_time_ms: int | None = None,
+    ) -> list[DataFileRecord]:
+        clauses: list[str] = []
+        parameters: list[object] = []
+        for column, value in (
+            ("logical_dataset", logical_dataset),
+            ("layer", layer),
+            ("interval", interval),
+        ):
+            if value is not None:
+                clauses.append(f"{column} = ?")
+                parameters.append(value)
+        if statuses:
+            placeholders = ", ".join("?" for _ in statuses)
+            clauses.append(f"status IN ({placeholders})")
+            parameters.extend(sorted(status.value for status in statuses))
+        if symbols:
+            placeholders = ", ".join("?" for _ in symbols)
+            clauses.append(f"symbol IN ({placeholders})")
+            parameters.extend(symbols)
+        if start_time_ms is not None:
+            clauses.append("end_time_ms >= ?")
+            parameters.append(start_time_ms)
+        if end_time_ms is not None:
+            clauses.append("start_time_ms <= ?")
+            parameters.append(end_time_ms)
+        where = f" WHERE {' AND '.join(clauses)}" if clauses else ""
+        try:
+            with self._connect() as connection:
+                rows = connection.execute(
+                    "SELECT * FROM data_files"
+                    f"{where} ORDER BY symbol, interval, start_time_ms, file_id",
+                    parameters,
+                ).fetchall()
+        except sqlite3.Error as exc:
+            raise StateStoreError(f"cannot list data files: {exc}") from exc
+        return [self._data_file_from_row(row) for row in rows]
+
+    def register_schema_version(
+        self, logical_dataset: str, schema_version: int, schema_json: str
+    ) -> None:
+        try:
+            with self.transaction() as connection:
+                row = connection.execute(
+                    """
+                    SELECT schema_json FROM schema_versions
+                    WHERE logical_dataset = ? AND schema_version = ?
+                    """,
+                    (logical_dataset, schema_version),
+                ).fetchone()
+                if row is not None and str(row["schema_json"]) != schema_json:
+                    raise StateStoreError(
+                        f"schema content mismatch for {logical_dataset} v{schema_version}"
+                    )
+                connection.execute(
+                    """
+                    INSERT OR IGNORE INTO schema_versions(
+                        logical_dataset, schema_version, schema_json, created_at_ms
+                    ) VALUES (?, ?, ?, ?)
+                    """,
+                    (logical_dataset, schema_version, schema_json, now_ms()),
+                )
+        except StateStoreError:
+            raise
+        except sqlite3.Error as exc:
+            raise StateStoreError(
+                f"cannot register schema {logical_dataset} v{schema_version}: {exc}"
+            ) from exc
+
+    def register_quality_result(
+        self, *, file_id: str, check_name: str, passed: bool, details_json: str
+    ) -> str:
+        result_id = hashlib.sha256(
+            f"{file_id}\x1f{check_name}\x1f{details_json}".encode()
+        ).hexdigest()
+        try:
+            with self.transaction() as connection:
+                connection.execute(
+                    """
+                    INSERT OR IGNORE INTO quality_results(
+                        result_id, file_id, check_name, passed, details_json, created_at_ms
+                    ) VALUES (?, ?, ?, ?, ?, ?)
+                    """,
+                    (result_id, file_id, check_name, int(passed), details_json, now_ms()),
+                )
+        except sqlite3.Error as exc:
+            raise StateStoreError(f"cannot register quality result {result_id}: {exc}") from exc
+        return result_id
 
     def transition_data_file(
         self,
