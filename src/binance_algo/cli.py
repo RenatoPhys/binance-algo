@@ -87,7 +87,9 @@ from binance_algo.research.experiments.ledger import (
     write_feature_history_report,
     write_hypothesis_history_report,
 )
-from binance_algo.research.experiments.models import HypothesisSpec
+from binance_algo.research.experiments.models import FeatureEvaluationSpec, HypothesisSpec
+from binance_algo.research.experiments.promotion import CandidateAssessment, PromotionManager
+from binance_algo.research.experiments.provenance import build_code_fingerprint
 from binance_algo.research.experiments.registry import sync_builtin_registry
 from binance_algo.research.experiments.runner import (
     ExperimentRunner,
@@ -95,6 +97,7 @@ from binance_algo.research.experiments.runner import (
     phase3_baseline_hypothesis,
 )
 from binance_algo.research.experiments.store import ResearchStore
+from binance_algo.research.validation.robustness import build_campaign_robustness
 
 app = typer.Typer(help="Auditable Binance USD-M Futures public-data foundation.")
 exchange_info_app = typer.Typer(help="Snapshot and inspect exchange metadata.")
@@ -110,6 +113,8 @@ research_feature_app = typer.Typer(help="Inspect persisted feature definitions."
 research_experiment_app = typer.Typer(help="Run and verify immutable research experiments.")
 research_campaign_app = typer.Typer(help="Plan, run, resume, and compare research campaigns.")
 research_ablation_app = typer.Typer(help="Evaluate contextual feature ablations.")
+research_promote_app = typer.Typer(help="Apply auditable research promotion gates.")
+research_candidate_app = typer.Typer(help="Generate candidate assessments in campaign context.")
 app.add_typer(exchange_info_app, name="exchange-info")
 app.add_typer(universe_app, name="universe")
 app.add_typer(backfill_app, name="backfill")
@@ -123,6 +128,8 @@ research_app.add_typer(research_feature_app, name="feature")
 research_app.add_typer(research_experiment_app, name="experiment")
 research_app.add_typer(research_campaign_app, name="campaign")
 research_app.add_typer(research_ablation_app, name="ablation")
+research_app.add_typer(research_promote_app, name="promote")
+research_app.add_typer(research_candidate_app, name="candidate")
 console = Console()
 
 
@@ -192,6 +199,17 @@ def _campaign_runner(settings: Settings, store: ResearchStore) -> CampaignRunner
         reports_root=settings.reports_root,
         research_config=settings.research,
         compression=settings.storage.parquet_compression,
+    )
+
+
+def _promotion_manager(settings: Settings, store: ResearchStore) -> PromotionManager:
+    return PromotionManager(
+        store=store,
+        experiment_runner=_experiment_runner(settings, store),
+        data_root=settings.data_root,
+        reports_root=settings.reports_root,
+        platform=settings.research_platform,
+        current_code_fingerprint=build_code_fingerprint(settings.project_root),
     )
 
 
@@ -861,6 +879,38 @@ def research_feature_history(ctx: typer.Context, feature_id: str) -> None:
     )
 
 
+@research_feature_app.command("evaluate")
+def research_feature_evaluate(
+    ctx: typer.Context,
+    run_id: Annotated[str, typer.Option("--run", help="Succeeded experiment run ID.")],
+    feature_id: Annotated[str, typer.Option("--feature", help="Registered feature ID.")],
+    file: Annotated[
+        Path,
+        typer.Option("--file", help="Strict contextual evaluation YAML.", exists=True),
+    ],
+) -> None:
+    """Record one manual/contextual evaluation without mutating the feature definition."""
+
+    try:
+        settings = _settings(ctx)
+        _configure(settings)
+        payload = yaml.safe_load(file.read_text(encoding="utf-8"))
+        if not isinstance(payload, dict):
+            raise ResearchError("feature evaluation YAML root must be a mapping")
+        spec = FeatureEvaluationSpec.model_validate(
+            {**payload, "run_id": run_id, "feature_id": feature_id}
+        )
+        store = ResearchStore(settings.research_db_path)
+        store.initialize()
+        record = store.record_feature_evaluation(spec)
+    except (OSError, yaml.YAMLError, ValidationError, BinanceAlgoError) as exc:
+        _fail(exc if isinstance(exc, BinanceAlgoError) else ResearchError(str(exc)))
+    console.print(
+        f"Feature evaluation registered: {record.evaluation_id}\n"
+        f"Decision: {record.decision.value}; metric={record.metric_name}"
+    )
+
+
 @research_ablation_app.command("evaluate")
 def research_ablation_evaluate(ctx: typer.Context, campaign_id_or_name: str) -> None:
     """Evaluate every preregistered ablation pair in a completed campaign."""
@@ -1200,6 +1250,157 @@ def research_campaign_compare(ctx: typer.Context, campaign_id_or_name: str) -> N
         f"Parquet: {result.comparison_path}\n"
         f"Reports: {result.report_json_path}\n         {result.report_markdown_path}"
     )
+
+
+@research_campaign_app.command("robustness")
+def research_campaign_robustness(ctx: typer.Context, campaign_id_or_name: str) -> None:
+    """Verify segmented artifacts and report neighborhood, DSR, PBO, and lockbox state."""
+
+    try:
+        settings = _settings(ctx)
+        _configure(settings)
+        store = ResearchStore(settings.research_db_path)
+        store.initialize()
+        campaign = store.get_campaign(campaign_id_or_name)
+        if campaign is None:
+            raise ResearchError(f"unknown campaign: {campaign_id_or_name}")
+        result = build_campaign_robustness(
+            store=store,
+            campaign=campaign,
+            data_root=settings.data_root,
+            reports_root=settings.reports_root,
+            platform=settings.research_platform,
+        )
+    except (BinanceAlgoError, OSError, pl.exceptions.PolarsError) as exc:
+        _fail(exc if isinstance(exc, BinanceAlgoError) else ResearchError(str(exc)))
+    console.print(
+        f"Campaign robustness: {result.campaign_name}\n"
+        f"Trials: planned={result.planned_trials}, successful={result.successful_trials}, "
+        f"distinct={result.distinct_strategies}, "
+        f"independent_approx={result.approximate_independent_strategies:.3f}\n"
+        f"Best (selected, not independent OOS): {result.best_experiment_id}\n"
+        f"DSR: {result.dsr.probability:.6f} over {result.dsr.number_of_trials} trials\n"
+        f"PBO: {result.pbo.status.value} — {result.pbo.reason}\n"
+        f"Lockbox: {result.lockbox.status.value} — {result.lockbox.reason}\n"
+        f"JSON: {result.report_json_path}\nMarkdown: {result.report_markdown_path}"
+    )
+
+
+def _print_candidate_assessment(result: CandidateAssessment) -> None:
+    table = Table(title=f"candidate gates — {result.experiment_id[:24]}")
+    table.add_column("gate")
+    table.add_column("result")
+    table.add_column("detail")
+    for gate in result.gates:
+        table.add_row(gate.name, "PASS" if gate.passed else "FAIL", gate.detail)
+    console.print(table)
+    console.print(
+        f"Candidate assessment: {'PASS' if result.passed else 'BLOCKED'}\n"
+        f"Campaign trials: {result.robustness.planned_trials}\n"
+        f"JSON: {result.report_json_path}\nMarkdown: {result.report_markdown_path}"
+    )
+
+
+@research_candidate_app.command("report")
+def research_candidate_report(ctx: typer.Context, experiment_id: str) -> None:
+    """Generate a gate report without creating a promotion event."""
+
+    try:
+        settings = _settings(ctx)
+        _configure(settings)
+        store = ResearchStore(settings.research_db_path)
+        store.initialize()
+        result = _promotion_manager(settings, store).assess_candidate(experiment_id)
+    except (BinanceAlgoError, OSError, pl.exceptions.PolarsError) as exc:
+        _fail(exc if isinstance(exc, BinanceAlgoError) else ResearchError(str(exc)))
+    _print_candidate_assessment(result)
+
+
+@research_promote_app.command("candidate")
+def research_promote_candidate(
+    ctx: typer.Context,
+    experiment_id: str,
+    reason: Annotated[str, typer.Option("--reason", help="Mandatory promotion rationale.")],
+) -> None:
+    """Promote from discovery only when every preregistered candidate gate passes."""
+
+    try:
+        settings = _settings(ctx)
+        _configure(settings)
+        store = ResearchStore(settings.research_db_path)
+        store.initialize()
+        result = _promotion_manager(settings, store).promote_candidate(experiment_id, reason=reason)
+    except (BinanceAlgoError, OSError, pl.exceptions.PolarsError) as exc:
+        _fail(exc if isinstance(exc, BinanceAlgoError) else ResearchError(str(exc)))
+    _print_candidate_assessment(result.assessment)
+    console.print(f"Promotion event: {result.event.promotion_id} [{result.event.decision.value}]")
+    if not result.assessment.passed:
+        raise typer.Exit(code=1)
+
+
+@research_promote_app.command("phase4")
+def research_promote_phase4(
+    ctx: typer.Context,
+    experiment_id: str,
+    reason: Annotated[str, typer.Option("--reason", help="Mandatory promotion rationale.")],
+) -> None:
+    """Require an approved lockbox event before creating a Phase 4 candidate."""
+
+    try:
+        settings = _settings(ctx)
+        _configure(settings)
+        store = ResearchStore(settings.research_db_path)
+        store.initialize()
+        event = _promotion_manager(settings, store).promote_phase4(experiment_id, reason=reason)
+    except (BinanceAlgoError, OSError, pl.exceptions.PolarsError) as exc:
+        _fail(exc if isinstance(exc, BinanceAlgoError) else ResearchError(str(exc)))
+    console.print(f"Phase 4 promotion event: {event.promotion_id} [{event.decision.value}]")
+    if event.decision.value != "APPROVED":
+        raise typer.Exit(code=1)
+
+
+@research_promote_app.command("history")
+def research_promotion_history(ctx: typer.Context, experiment_id: str) -> None:
+    """Show every immutable promotion, block, rejection, and invalidation event."""
+
+    try:
+        settings = _settings(ctx)
+        _configure(settings)
+        events = ResearchStore(settings.research_db_path).list_promotions(experiment_id)
+    except BinanceAlgoError as exc:
+        _fail(exc)
+    table = Table(title=f"promotion history — {experiment_id[:24]}")
+    table.add_column("from")
+    table.add_column("to")
+    table.add_column("decision")
+    table.add_column("reason")
+    for event in events:
+        table.add_row(
+            event.from_stage.value,
+            event.to_stage.value,
+            event.decision.value,
+            event.reason,
+        )
+    console.print(table)
+
+
+@research_app.command("reject")
+def research_reject(
+    ctx: typer.Context,
+    experiment_id: str,
+    reason: Annotated[str, typer.Option("--reason", help="Mandatory rejection rationale.")],
+) -> None:
+    """Create an explicit immutable rejection event without deleting any result."""
+
+    try:
+        settings = _settings(ctx)
+        _configure(settings)
+        store = ResearchStore(settings.research_db_path)
+        store.initialize()
+        event = _promotion_manager(settings, store).reject(experiment_id, reason=reason)
+    except BinanceAlgoError as exc:
+        _fail(exc)
+    console.print(f"Rejection event: {event.promotion_id} [{event.to_stage.value}]")
 
 
 @research_app.command("build")

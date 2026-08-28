@@ -276,7 +276,18 @@ MIGRATION_3 = Migration(
     ),
 )
 
-MIGRATIONS = (MIGRATION_1, MIGRATION_2, MIGRATION_3)
+MIGRATION_4 = Migration(
+    version=4,
+    name="research_promotion_indexes",
+    statements=(
+        """
+        CREATE INDEX idx_research_promotions_experiment
+        ON research_promotions(experiment_id, created_at_ms, promotion_id)
+        """,
+    ),
+)
+
+MIGRATIONS = (MIGRATION_1, MIGRATION_2, MIGRATION_3, MIGRATION_4)
 LATEST_SCHEMA_VERSION = MIGRATIONS[-1].version
 
 

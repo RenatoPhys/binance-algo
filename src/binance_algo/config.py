@@ -191,6 +191,23 @@ class ResearchConfig(StrictModel):
         return self
 
 
+class ResearchPlatformConfig(StrictModel):
+    max_campaign_trials: int = Field(default=1_000, ge=1, le=100_000)
+    default_max_workers: int = Field(default=4, ge=1, le=32)
+    default_artifact_policy: Literal["summary", "full"] = "summary"
+    allow_dirty_code: bool = True
+    promotion_requires_clean_git: bool = True
+    stale_run_after_minutes: int = Field(default=60, ge=1, le=10_080)
+    heartbeat_seconds: int = Field(default=30, ge=1, le=3_600)
+    chart_generation: Literal["opt_in"] = "opt_in"
+    min_profitable_folds: int = Field(default=2, ge=1)
+    max_month_concentration: float = Field(default=0.75, gt=0, le=1)
+    max_symbol_concentration: float = Field(default=0.75, gt=0, le=1)
+    min_neighbor_positive_fraction: float = Field(default=0.50, ge=0, le=1)
+    min_dsr_probability: float = Field(default=0.95, gt=0.5, lt=1)
+    lockbox_manifest: str | None = None
+
+
 class SafetyConfig(StrictModel):
     live_trading: bool = False
     allow_order_submission: bool = False
@@ -230,6 +247,7 @@ class Settings(StrictModel):
     streams: StreamsConfig
     recorder: RecorderConfig
     research: ResearchConfig
+    research_platform: ResearchPlatformConfig = Field(default_factory=ResearchPlatformConfig)
     safety: SafetyConfig
     credentials: Credentials = Field(default_factory=Credentials)
     _project_root: Path = PrivateAttr(default_factory=Path.cwd)

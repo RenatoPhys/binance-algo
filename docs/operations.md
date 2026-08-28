@@ -97,7 +97,7 @@ uv run binance-algo --config configs/research.yaml research registry status
 uv run binance-algo --config configs/research.yaml research registry migrate
 ```
 
-`init` e `migrate` são idempotentes. `status` deve reportar schema 3, WAL e foreign keys ativos e
+`init` e `migrate` são idempotentes. `status` deve reportar schema 4, WAL e foreign keys ativos e
 os contadores do registry. Os comandos usam `storage.research_db`, cujo default é
 `var/state/research.sqlite3`; esse banco não deve ser substituído pelo manifesto de ingestão.
 
@@ -117,11 +117,26 @@ uv run binance-algo --config configs/research.yaml research ablation evaluate \
 uv run binance-algo --config configs/research.yaml research feature history \
   residual_momentum_1h:v1
 uv run binance-algo --config configs/research.yaml research hypothesis history HYP-RESMOM-0002
+uv run binance-algo --config configs/research.yaml research campaign robustness \
+  residual_momentum_remove_1h
+uv run binance-algo --config configs/research.yaml research candidate report <experiment_id>
+uv run binance-algo --config configs/research.yaml research promote candidate <experiment_id> \
+  --reason "stable net performance across folds"
+uv run binance-algo --config configs/research.yaml research promote phase4 <experiment_id> \
+  --reason "independent lockbox passed"
+uv run binance-algo --config configs/research.yaml research promote history <experiment_id>
+uv run binance-algo --config configs/research.yaml research reject <experiment_id> \
+  --reason "cost-sensitive isolated parameter peak"
 ```
 
 Repetir a criação com conteúdo idêntico não duplica linhas. Alterar uma definição imutável sob o
 mesmo ID falha explicitamente. Não edite o SQLite à mão. Relatórios do ledger são derivados; a
 fonte de verdade continua sendo o registry com foreign keys para runs e features.
+
+`promote candidate` retorna status não zero quando qualquer gate falha, mas preserva o evento
+`BLOCKED` e o candidate report. `promote phase4` também retorna não zero enquanto
+`lockbox_manifest` estiver ausente ou o estágio não for `LOCKBOX_EVALUATED`. Nunca altere a config
+para apontar o mesmo dataset de desenvolvimento como lockbox.
 
 ## Falhas conhecidas e resposta
 

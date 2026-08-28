@@ -28,6 +28,10 @@
   negativas sem alterar o lifecycle global da feature.
 - Runner de ablação com oito deltas orientados como `with feature - without feature`, regra
   registrada, validação de artifacts e relatórios JSON/Markdown derivados.
+- Robustez por fold/regime/mês/símbolo, distribuições da campanha, vizinhança de parâmetros e
+  contagem aproximada de estratégias independentes.
+- DSR com skewness/kurtosis e trial count, PBO/CSCV condicional e lockbox indisponível explícita.
+- Candidate reports e eventos imutáveis de promoção, bloqueio e rejeição; Git dirty não promove.
 
 ## 0.5.0 — 2026-08-28
 

@@ -24,10 +24,22 @@ from binance_algo.research.experiments.models import (
     FeatureDecision,
     HypothesisSpec,
     HypothesisStatus,
+    PromotionDecision,
     ProvenanceQuality,
+    ResearchStage,
+)
+from binance_algo.research.experiments.promotion import (
+    PromotionManager,
+    current_research_stage,
 )
 from binance_algo.research.experiments.registry import sync_builtin_registry
+from binance_algo.research.experiments.runner import ExperimentRunner
 from binance_algo.research.experiments.store import ResearchStore
+from binance_algo.research.validation.multiple_testing import StatisticalStatus
+from binance_algo.research.validation.robustness import (
+    RobustnessStatus,
+    build_campaign_robustness,
+)
 
 from ..research_fixtures import research_frame
 
@@ -246,11 +258,86 @@ def test_campaign_run_uses_processes_then_rerun_is_all_cache_hits(tmp_path: Path
     assert first.campaign.status is CampaignStatus.COMPLETED
     assert first.executed_count == first.succeeded_count == 3
     assert first.cache_hit_count == first.failed_count == 0
-    assert pl.read_parquet(first.comparison.comparison_path).height == 3
+    comparison = pl.read_parquet(first.comparison.comparison_path)
+    assert comparison.height == 3
+    assert {
+        "gross_return",
+        "worst_fold_return",
+        "profitable_folds",
+        "fold_count",
+        "cost_1_5x_return",
+        "delay_1_bar_return",
+    }.issubset(comparison.columns)
     attempts = {
         identifier: len(store.list_runs(experiment_id_value=identifier))
         for _, identifier, _ in store.list_campaign_experiments(plan.campaign_id)
     }
+
+    robustness = build_campaign_robustness(
+        store=store,
+        campaign=first.campaign,
+        data_root=data_root,
+        reports_root=tmp_path / "reports",
+        platform=settings.research_platform,
+    )
+    assert robustness.planned_trials == robustness.successful_trials == 3
+    assert robustness.dsr.number_of_trials == 3
+    assert robustness.pbo.status is StatisticalStatus.NOT_APPLICABLE
+    assert robustness.lockbox.status is RobustnessStatus.NOT_AVAILABLE
+    assert "not independent OOS evidence" in robustness.report_markdown_path.read_text(
+        encoding="utf-8"
+    )
+    dirty_fingerprint = CodeFingerprint(
+        git_commit="b" * 40,
+        git_dirty=True,
+        git_diff_sha256="f" * 64,
+        source_tree_sha256=None,
+        provenance_quality=ProvenanceQuality.GIT_DIRTY,
+    )
+    promotion_manager = PromotionManager(
+        store=store,
+        experiment_runner=ExperimentRunner(
+            store=store,
+            data_root=data_root,
+            research_config=config,
+            compression=settings.storage.parquet_compression,
+        ),
+        data_root=data_root,
+        reports_root=tmp_path / "reports",
+        platform=settings.research_platform,
+        current_code_fingerprint=dirty_fingerprint,
+    )
+    promotion = promotion_manager.promote_candidate(
+        robustness.best_experiment_id,
+        reason="synthetic dirty-code promotion check",
+    )
+    assert promotion.event.decision is PromotionDecision.BLOCKED
+    assert not next(
+        gate for gate in promotion.assessment.gates if gate.name == "promotion_clean_git"
+    ).passed
+    assert (
+        current_research_stage(store.list_promotions(robustness.best_experiment_id))
+        is ResearchStage.DISCOVERY
+    )
+    phase4 = promotion_manager.promote_phase4(
+        robustness.best_experiment_id,
+        reason="synthetic unavailable-lockbox check",
+    )
+    assert phase4.decision is PromotionDecision.BLOCKED
+    assert phase4.criteria_snapshot["lockbox"]["status"] == "NOT_AVAILABLE"
+    assert (
+        current_research_stage(store.list_promotions(robustness.best_experiment_id))
+        is ResearchStage.DISCOVERY
+    )
+    rejected = promotion_manager.reject(
+        robustness.best_experiment_id,
+        reason="synthetic explicit rejection",
+    )
+    assert rejected.to_stage is ResearchStage.REJECTED
+    assert (
+        current_research_stage(store.list_promotions(robustness.best_experiment_id))
+        is ResearchStage.REJECTED
+    )
 
     baseline = plan.trials[0]
     candidate = plan.trials[1]

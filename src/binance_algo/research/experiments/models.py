@@ -75,6 +75,22 @@ class FeatureDecision(StrEnum):
     RETEST_REQUIRED = "RETEST_REQUIRED"
 
 
+class ResearchStage(StrEnum):
+    DISCOVERY = "DISCOVERY"
+    CANDIDATE = "CANDIDATE"
+    LOCKBOX_EVALUATED = "LOCKBOX_EVALUATED"
+    PHASE4_CANDIDATE = "PHASE4_CANDIDATE"
+    REJECTED = "REJECTED"
+    INVALIDATED = "INVALIDATED"
+
+
+class PromotionDecision(StrEnum):
+    APPROVED = "APPROVED"
+    BLOCKED = "BLOCKED"
+    REJECTED = "REJECTED"
+    INVALIDATED = "INVALIDATED"
+
+
 class ArtifactPolicy(StrEnum):
     SUMMARY = "summary"
     FULL = "full"
@@ -223,6 +239,22 @@ class FeatureEvaluationSpec(ImmutableModel):
         return self
 
 
+class PromotionEventSpec(ImmutableModel):
+    experiment_id: str = Field(min_length=1)
+    from_stage: ResearchStage
+    to_stage: ResearchStage
+    decision: PromotionDecision
+    criteria_snapshot: dict[str, Any]
+    reason: str = Field(min_length=1)
+    code_fingerprint: CodeFingerprint
+
+    @model_validator(mode="after")
+    def validate_criteria(self) -> Self:
+        normalized = canonicalize(self.criteria_snapshot, field_path="promotion.criteria_snapshot")
+        object.__setattr__(self, "criteria_snapshot", cast(dict[str, Any], normalized))
+        return self
+
+
 class ExperimentSpec(ImmutableModel):
     hypothesis_id: str = Field(min_length=1)
     campaign_id: str | None = None
@@ -287,7 +319,10 @@ __all__ = [
     "LabelIdentity",
     "MetricScope",
     "ParameterizedComponent",
+    "PromotionDecision",
+    "PromotionEventSpec",
     "ProvenanceQuality",
+    "ResearchStage",
     "RunStatus",
     "VersionedComponent",
 ]
