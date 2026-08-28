@@ -32,7 +32,7 @@ from binance_algo.data.state_store import StateStore
 from binance_algo.data.storage import LocalFilesystemStorage
 
 
-def kline_csv() -> bytes:
+def kline_csv(*, has_header: bool = True) -> bytes:
     header = ",".join(KLINE_HEADER)
     rows = [
         "1787616000000,78952.90,78970.10,78906.20,78931.50,113.083,"
@@ -40,13 +40,14 @@ def kline_csv() -> bytes:
         "1787616060000,78931.50,78940.00,78910.00,78920.00,10.000,"
         "1787616119999,789200.00000,200,5.000,394600.00000,0",
     ]
-    return (header + "\n" + "\n".join(rows) + "\n").encode()
+    prefix = f"{header}\n" if has_header else ""
+    return (prefix + "\n".join(rows) + "\n").encode()
 
 
-def zip_bytes(member_name: str = "BTCUSDT-1m-2026-08-25.csv") -> bytes:
+def zip_bytes(member_name: str = "BTCUSDT-1m-2026-08-25.csv", *, has_header: bool = True) -> bytes:
     output = io.BytesIO()
     with zipfile.ZipFile(output, "w", compression=zipfile.ZIP_DEFLATED) as archive:
-        archive.writestr(member_name, kline_csv())
+        archive.writestr(member_name, kline_csv(has_header=has_header))
     return output.getvalue()
 
 
@@ -198,6 +199,23 @@ def test_rejects_zip_path_traversal(tmp_path: Path) -> None:
             chunk_bytes=65_536,
         )
     assert not (tmp_path.parent / "BTCUSDT-1m-2026-08-25.csv").exists()
+
+
+def test_accepts_legacy_headerless_archive(tmp_path: Path) -> None:
+    archive_path = tmp_path / target().filename
+    archive_path.write_bytes(zip_bytes(has_header=False))
+    extracted_path = tmp_path / target().csv_filename
+
+    rows = validate_and_extract_kline_archive(
+        archive_path,
+        extracted_path,
+        expected_csv_filename=target().csv_filename,
+        max_uncompressed_bytes=1_000_000,
+        chunk_bytes=65_536,
+    )
+
+    assert rows == 2
+    assert extracted_path.read_bytes() == kline_csv(has_header=False)
 
 
 def test_checksum_and_target_planning_are_strict() -> None:

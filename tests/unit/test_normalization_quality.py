@@ -10,7 +10,7 @@ import pytest
 from binance_algo.common.errors import DataQualityError
 from binance_algo.data.catalog import rebuild_kline_catalog
 from binance_algo.data.manifest import DataFileRecord, DataFileStatus
-from binance_algo.data.normalize import KlineNormalizer, NormalizeOutcome
+from binance_algo.data.normalize import KlineNormalizer, NormalizeOutcome, normalize_kline_csv
 from binance_algo.data.quality import audit_kline_files, audit_kline_frame
 from binance_algo.data.state_store import StateStore
 from binance_algo.data.storage import LocalFilesystemStorage
@@ -108,6 +108,24 @@ def test_normalization_is_typed_deduplicated_sorted_and_idempotent(tmp_path: Pat
         statuses={DataFileStatus.NORMALIZED},
     )
     assert len(bronze) == 1
+
+
+def test_normalization_accepts_legacy_headerless_csv(tmp_path: Path) -> None:
+    csv_path = tmp_path / "legacy.csv"
+    csv_path.write_bytes(_csv().split(b"\n", 1)[1])
+
+    frame, source_rows, duplicate_rows, out_of_order_rows = normalize_kline_csv(
+        csv_path,
+        symbol="BTCUSDT",
+        interval="1m",
+        ingested_at_ns=123,
+    )
+
+    assert source_rows == 3
+    assert frame.height == 2
+    assert duplicate_rows == 1
+    assert out_of_order_rows == 1
+    assert frame["open_time_ms"].to_list() == [START_MS, START_MS + 60_000]
 
 
 def test_quality_gate_and_duckdb_catalog(tmp_path: Path) -> None:

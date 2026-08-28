@@ -27,7 +27,7 @@ class FixtureFundingSource:
                 symbol=symbol,
                 fundingRate="0.00010000",
                 fundingTime=start_time_ms + 10,
-                markPrice="50000.0",
+                markPrice="",
                 rateType="Regular",
             ),
             FundingRatePayload(
@@ -68,5 +68,10 @@ async def test_funding_sync_is_immutable_idempotent_and_cataloged(tmp_path: Path
     assert catalog.row_count == 2
     with duckdb.connect(catalog.database_path, read_only=True) as connection:
         total = connection.execute("SELECT SUM(funding_rate) FROM funding_rates").fetchone()
+        legacy = connection.execute(
+            "SELECT mark_price_str, mark_price FROM funding_rates ORDER BY funding_time_ms LIMIT 1"
+        ).fetchone()
         assert total is not None
         assert total[0] == pytest.approx(0.00005)
+        assert legacy == ("", None)
+    assert '"markPrice":""' in Path(first[0].raw_path).read_text(encoding="utf-8")
