@@ -92,6 +92,16 @@ uv run binance-algo --config configs/research.yaml research feature history \
 uv run binance-algo --config configs/research.yaml research campaign robustness \
   residual_momentum_remove_1h
 uv run binance-algo --config configs/research.yaml research candidate report <experiment_id>
+uv run binance-algo --config configs/research.yaml research hypothesis create \
+  --file configs/hypotheses/funding_carry_v1.yaml
+uv run binance-algo --config configs/research.yaml research hypothesis create \
+  --file configs/hypotheses/residual_mean_reversion_v1.yaml
+uv run binance-algo --config configs/research.yaml research campaign run \
+  --file configs/experiments/funding_carry_discovery.yaml
+uv run binance-algo --config configs/research.yaml research campaign run \
+  --file configs/experiments/residual_mean_reversion_discovery.yaml
+uv run binance-algo --config configs/research.yaml research dashboard build --open
+uv run python scripts/benchmark_campaign.py --trials 20 --workers 4
 ```
 
 Durante o recorder, consulte `http://127.0.0.1:9108/health/live`, `/health/ready` e `/metrics`.

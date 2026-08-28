@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import webbrowser
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -72,6 +73,7 @@ from binance_algo.doctor import run_doctor
 from binance_algo.exchange.binance_usdm.rest import BinanceUSDMRestClient
 from binance_algo.logging import configure_logging, get_logger
 from binance_algo.observability.metrics import RecorderMetrics
+from binance_algo.research.dashboard import build_research_dashboard
 from binance_algo.research.dataset import build_and_persist_research_dataset
 from binance_algo.research.datasets.references import load_dataset_reference
 from binance_algo.research.experiments.ablation import AblationRunner
@@ -115,6 +117,7 @@ research_campaign_app = typer.Typer(help="Plan, run, resume, and compare researc
 research_ablation_app = typer.Typer(help="Evaluate contextual feature ablations.")
 research_promote_app = typer.Typer(help="Apply auditable research promotion gates.")
 research_candidate_app = typer.Typer(help="Generate candidate assessments in campaign context.")
+research_dashboard_app = typer.Typer(help="Build the offline research dashboard.")
 app.add_typer(exchange_info_app, name="exchange-info")
 app.add_typer(universe_app, name="universe")
 app.add_typer(backfill_app, name="backfill")
@@ -130,6 +133,7 @@ research_app.add_typer(research_campaign_app, name="campaign")
 research_app.add_typer(research_ablation_app, name="ablation")
 research_app.add_typer(research_promote_app, name="promote")
 research_app.add_typer(research_candidate_app, name="candidate")
+research_app.add_typer(research_dashboard_app, name="dashboard")
 console = Console()
 
 
@@ -189,6 +193,7 @@ def _experiment_runner(settings: Settings, store: ResearchStore) -> ExperimentRu
         data_root=settings.data_root,
         research_config=settings.research,
         compression=settings.storage.parquet_compression,
+        heartbeat_seconds=settings.research_platform.heartbeat_seconds,
     )
 
 
@@ -199,6 +204,7 @@ def _campaign_runner(settings: Settings, store: ResearchStore) -> CampaignRunner
         reports_root=settings.reports_root,
         research_config=settings.research,
         compression=settings.storage.parquet_compression,
+        heartbeat_seconds=settings.research_platform.heartbeat_seconds,
     )
 
 
@@ -210,6 +216,33 @@ def _promotion_manager(settings: Settings, store: ResearchStore) -> PromotionMan
         reports_root=settings.reports_root,
         platform=settings.research_platform,
         current_code_fingerprint=build_code_fingerprint(settings.project_root),
+    )
+
+
+@research_dashboard_app.command("build")
+def research_dashboard_build(
+    ctx: typer.Context,
+    open_browser: Annotated[
+        bool,
+        typer.Option("--open", help="Open the generated dashboard in the default browser."),
+    ] = False,
+) -> None:
+    """Build deterministic JSON and a self-contained offline HTML dashboard."""
+
+    try:
+        settings = _settings(ctx)
+        _configure(settings)
+        result = build_research_dashboard(
+            store=ResearchStore(settings.research_db_path),
+            reports_root=settings.reports_root,
+            data_root=settings.data_root,
+        )
+    except BinanceAlgoError as exc:
+        _fail(exc)
+    if open_browser:
+        webbrowser.open(result.index_path.resolve().as_uri())
+    console.print(
+        f"Research dashboard built:\nHTML: {result.index_path}\nSnapshot: {result.snapshot_path}"
     )
 
 

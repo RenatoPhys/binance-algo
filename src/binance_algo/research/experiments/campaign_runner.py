@@ -26,6 +26,7 @@ class TrialWorkerRequest:
     data_root: str
     research_config: dict[str, Any]
     compression: str
+    heartbeat_seconds: float
     experiment_id: str
 
 
@@ -56,6 +57,7 @@ def _execute_trial_worker(request: TrialWorkerRequest) -> TrialWorkerResult:
         data_root=Path(request.data_root),
         research_config=config,
         compression=request.compression,
+        heartbeat_seconds=request.heartbeat_seconds,
     ).run(request.experiment_id)
     if result.run.result_digest is None:
         raise ResearchError("successful trial has no result digest")
@@ -75,12 +77,16 @@ class CampaignRunner:
         reports_root: Path,
         research_config: ResearchConfig,
         compression: str,
+        heartbeat_seconds: float = 30,
     ) -> None:
         self.store = store
         self.data_root = data_root.resolve()
         self.reports_root = reports_root.resolve()
         self.research_config = research_config
         self.compression = compression
+        if heartbeat_seconds <= 0:
+            raise ValueError("heartbeat_seconds must be positive")
+        self.heartbeat_seconds = heartbeat_seconds
 
     def register(self, plan: CampaignPlan) -> CampaignRecord:
         if self.store.get_hypothesis(plan.source.campaign.hypothesis_id) is None:
@@ -114,6 +120,7 @@ class CampaignRunner:
             data_root=self.data_root,
             research_config=self.research_config,
             compression=self.compression,
+            heartbeat_seconds=self.heartbeat_seconds,
         )
         cache_hits: list[str] = []
         pending: list[str] = []
@@ -208,6 +215,7 @@ class CampaignRunner:
                 data_root=str(self.data_root),
                 research_config=request_payload,
                 compression=self.compression,
+                heartbeat_seconds=self.heartbeat_seconds,
                 experiment_id=identifier,
             )
             for identifier in pending

@@ -13,6 +13,7 @@ import orjson
 
 from binance_algo.common.errors import ResearchError
 from binance_algo.config import ResearchPlatformConfig
+from binance_algo.research.contracts import ValidationProfile
 from binance_algo.research.experiments.models import (
     CodeFingerprint,
     PromotionDecision,
@@ -172,6 +173,7 @@ class PromotionManager:
         spec = self.store.get_experiment(experiment_id)
         if spec is None:
             raise ResearchError(f"unknown experiment: {experiment_id}")
+        self._require_full_validation_profile(spec.validation_plan.parameters)
         campaigns = self.store.campaigns_for_experiment(experiment_id)
         if len(campaigns) != 1:
             raise ResearchError(
@@ -324,6 +326,10 @@ class PromotionManager:
         return PromotionResult(assessment=assessment, event=event)
 
     def promote_phase4(self, experiment_id: str, *, reason: str) -> PromotionRecord:
+        spec = self.store.get_experiment(experiment_id)
+        if spec is None:
+            raise ResearchError(f"unknown experiment: {experiment_id}")
+        self._require_full_validation_profile(spec.validation_plan.parameters)
         events = self.store.list_promotions(experiment_id)
         stage = current_research_stage(events)
         campaigns = self.store.campaigns_for_experiment(experiment_id)
@@ -391,6 +397,17 @@ class PromotionManager:
                 f"research_candidates/experiment_id={assessment.experiment_id[:24]}/candidate.json"
             ),
         }
+
+    @staticmethod
+    def _require_full_validation_profile(parameters: dict[str, Any]) -> None:
+        try:
+            profile = ValidationProfile(str(parameters.get("profile", ValidationProfile.FULL)))
+        except ValueError as exc:
+            raise ResearchError("experiment has an unknown validation profile") from exc
+        if profile is ValidationProfile.DISCOVERY:
+            raise ResearchError(
+                "discovery profile explicitly blocks assessment and promotion; rerun with full"
+            )
 
 
 __all__ = [

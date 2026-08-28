@@ -3,11 +3,17 @@
 from __future__ import annotations
 
 import math
+from collections.abc import Mapping
 from typing import Any
 
 import numpy as np
 
-from binance_algo.research.features.base import FeatureDefinition
+from binance_algo.common.errors import ResearchError
+from binance_algo.research.features.base import (
+    FeatureArray,
+    FeatureComputeContext,
+    FeatureDefinition,
+)
 
 
 def compute_volatility_features(
@@ -78,8 +84,41 @@ VOLATILITY_FEATURES = (
 )
 
 
+class VolatilityBundle:
+    bundle_id = "volatility"
+    version = "v1"
+
+    def definitions(self) -> tuple[FeatureDefinition, ...]:
+        return VOLATILITY_FEATURES
+
+    def compute(
+        self,
+        context: FeatureComputeContext,
+        parameters: Mapping[str, Any],
+    ) -> Mapping[str, FeatureArray]:
+        if parameters:
+            raise ResearchError("volatility:v1 does not accept parameters")
+        realized, intraday_range = compute_volatility_features(
+            minute_log_returns=context.minute_log_returns,
+            highs=context.highs,
+            lows=context.lows,
+            decision_indices=context.decision_indices,
+        )
+        hourly_returns = context.require_output("log_return_1h")
+        btc_index = context.symbols.index("BTCUSDT")
+        eth_index = context.symbols.index("ETHUSDT")
+        market_returns = (hourly_returns[:, btc_index] + hourly_returns[:, eth_index]) / 2
+        regime = compute_market_volatility_regime(market_returns)
+        return {
+            "realized_volatility_24h": realized,
+            "intraday_range_4h": intraday_range,
+            "market_volatility_regime": np.tile(regime[:, None], (1, len(context.symbols))),
+        }
+
+
 __all__ = [
     "VOLATILITY_FEATURES",
+    "VolatilityBundle",
     "compute_market_volatility_regime",
     "compute_volatility_features",
 ]

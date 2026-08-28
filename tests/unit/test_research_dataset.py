@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import math
+import platform
 from pathlib import Path
 
 import numpy as np
@@ -8,6 +9,8 @@ import polars as pl
 
 from binance_algo.config import load_settings
 from binance_algo.research.dataset import MINUTE_MS, build_point_in_time_frame
+from binance_algo.research.datasets.fingerprints import logical_content_checksum
+from binance_algo.research.features.registry import phase3_feature_plan
 
 PROJECT_ROOT = Path(__file__).parents[2]
 BASE_CONFIG = PROJECT_ROOT / "configs" / "base.yaml"
@@ -100,6 +103,21 @@ def test_point_in_time_features_ignore_future_shock_and_labels_start_next_open()
     exit_price = source.filter(pl.col("open_time_ms") == row["label_end_time_ms"])["open"].item()
     assert math.isclose(row["future_return_1h"], exit_price / entry - 1, abs_tol=1e-14)
     assert baseline["decision_time_ms"].min() >= START_MS + 40 * 3_600_000
+    assert baseline.shape == (72, 33)
+    golden_checksums = {
+        "Linux": "4f6b5295164e92de7f8bf7124f7cde752324aab603dbaf845375a81ece335700",
+        "Windows": "6dab21ac8fc1b0a4fb5e46a1554d97d1057f61a1986b8f09ed14877980760839",
+    }
+    assert logical_content_checksum(baseline) == golden_checksums[platform.system()]
+    plan = phase3_feature_plan(config)
+    assert tuple(bundle.bundle.bundle_id for bundle in plan.bundles) == (
+        "returns_momentum",
+        "volatility",
+        "volume",
+        "microstructure",
+        "funding",
+    )
+    assert plan.feature_set.canonical_checksum.startswith("62e0aa63b7e61f92")
 
 
 def test_funding_event_at_entry_is_charged_to_previous_position() -> None:

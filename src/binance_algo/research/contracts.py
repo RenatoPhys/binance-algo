@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Iterable
 from dataclasses import dataclass
+from enum import StrEnum
 
 import polars as pl
 
@@ -12,6 +13,11 @@ from binance_algo.common.errors import ResearchError
 FEATURE_KEY_COLUMNS = ("decision_time_ms", "symbol")
 SCORE_REQUIRED_COLUMNS = (*FEATURE_KEY_COLUMNS, "score")
 FORBIDDEN_FEATURE_PREFIXES = ("future_", "outcome_", "label_")
+
+
+class ValidationProfile(StrEnum):
+    DISCOVERY = "discovery"
+    FULL = "full"
 
 
 def validate_feature_names(feature_names: Iterable[str]) -> tuple[str, ...]:
@@ -135,6 +141,7 @@ __all__ = [
     "FoldContext",
     "StrategyScores",
     "TrainingDataset",
+    "ValidationProfile",
     "select_feature_view",
     "validate_feature_names",
 ]

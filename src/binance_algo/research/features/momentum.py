@@ -2,11 +2,17 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from typing import Any
 
 import numpy as np
 
-from binance_algo.research.features.base import FeatureDefinition
+from binance_algo.common.errors import ResearchError
+from binance_algo.research.features.base import (
+    FeatureArray,
+    FeatureComputeContext,
+    FeatureDefinition,
+)
 
 MINUTES_PER_HOUR = 60
 
@@ -125,4 +131,57 @@ MOMENTUM_FEATURES = (
 )
 
 
-__all__ = ["MOMENTUM_FEATURES", "compute_log_returns", "compute_residual_momentum"]
+class ReturnsMomentumBundle:
+    bundle_id = "returns_momentum"
+    version = "v1"
+
+    def definitions(self) -> tuple[FeatureDefinition, ...]:
+        return MOMENTUM_FEATURES
+
+    def compute(
+        self,
+        context: FeatureComputeContext,
+        parameters: Mapping[str, Any],
+    ) -> Mapping[str, FeatureArray]:
+        if set(parameters) != {"horizons_minutes", "beta_window_hours"}:
+            raise ResearchError("returns_momentum requires horizons_minutes and beta_window_hours")
+        try:
+            horizons = tuple(int(value) for value in parameters["horizons_minutes"])
+            beta_window_hours = int(parameters["beta_window_hours"])
+        except (TypeError, ValueError) as exc:
+            raise ResearchError("returns_momentum parameters are invalid") from exc
+        labels = {5: "5m", 15: "15m", 60: "1h", 240: "4h", 1_440: "24h"}
+        if horizons != tuple(labels) or beta_window_hours < 1:
+            raise ResearchError("returns_momentum parameters differ from the explicit v1 protocol")
+        horizon_returns = compute_log_returns(
+            context.log_close,
+            context.decision_indices,
+            horizons=horizons,
+        )
+        (
+            benchmark_returns,
+            beta,
+            residual_returns,
+            residual_momentum_4h,
+            residual_momentum_24h,
+        ) = compute_residual_momentum(
+            horizon_returns[60],
+            symbols=context.symbols,
+            beta_window_hours=beta_window_hours,
+        )
+        return {
+            **{f"log_return_{labels[window]}": horizon_returns[window] for window in horizons},
+            "benchmark_return_1h": benchmark_returns,
+            "rolling_beta": beta,
+            "residual_momentum_1h": residual_returns,
+            "residual_momentum_4h": residual_momentum_4h,
+            "residual_momentum_24h": residual_momentum_24h,
+        }
+
+
+__all__ = [
+    "MOMENTUM_FEATURES",
+    "ReturnsMomentumBundle",
+    "compute_log_returns",
+    "compute_residual_momentum",
+]

@@ -4,20 +4,31 @@ from __future__ import annotations
 
 import hashlib
 from collections.abc import Iterable, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
+from functools import lru_cache
+from pathlib import Path
 from types import MappingProxyType
 from typing import Any
 
+import numpy as np
 import orjson
+import yaml
+from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from binance_algo.common.errors import ResearchError
 from binance_algo.config import ResearchConfig
-from binance_algo.research.features.base import FeatureDefinition, FeatureStatus
-from binance_algo.research.features.funding import FUNDING_FEATURES
-from binance_algo.research.features.microstructure import MICROSTRUCTURE_FEATURES
-from binance_algo.research.features.momentum import MOMENTUM_FEATURES
-from binance_algo.research.features.volatility import VOLATILITY_FEATURES
-from binance_algo.research.features.volume import VOLUME_FEATURES
+from binance_algo.research.features.base import (
+    FeatureArray,
+    FeatureBundle,
+    FeatureComputeContext,
+    FeatureDefinition,
+    FeatureStatus,
+)
+from binance_algo.research.features.funding import FundingBundle
+from binance_algo.research.features.microstructure import MicrostructureBundle
+from binance_algo.research.features.momentum import ReturnsMomentumBundle
+from binance_algo.research.features.volatility import VolatilityBundle
+from binance_algo.research.features.volume import VolumeBundle
 
 
 class FeatureRegistry:
@@ -114,58 +125,222 @@ class FeatureSetSpec:
         }
 
 
-PHASE3_FEATURE_REGISTRY = FeatureRegistry(
+class _StrictFeatureConfig(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+
+class FeatureBundleDeclaration(_StrictFeatureConfig):
+    bundle_id: str = Field(min_length=1)
+    version: str = Field(min_length=1)
+    outputs: tuple[str, ...] = Field(min_length=1)
+    parameters: dict[str, Any] = Field(default_factory=dict)
+    output_parameters: dict[str, dict[str, Any]] = Field(default_factory=dict)
+
+
+class FeatureSetDeclaration(_StrictFeatureConfig):
+    feature_set_id: str = Field(min_length=1)
+    version: str = Field(min_length=1)
+    description: str = Field(min_length=1)
+    outputs: tuple[str, ...] = Field(min_length=1)
+    bundles: tuple[FeatureBundleDeclaration, ...] = Field(min_length=1)
+
+
+class FeatureBundleRegistry:
+    """Closed registry of explicit bundles; arbitrary imports are intentionally unsupported."""
+
+    def __init__(self, bundles: Iterable[FeatureBundle]) -> None:
+        by_key: dict[tuple[str, str], FeatureBundle] = {}
+        for bundle in bundles:
+            key = (bundle.bundle_id, bundle.version)
+            if key in by_key:
+                raise ResearchError(
+                    f"duplicate feature bundle: {bundle.bundle_id}:{bundle.version}"
+                )
+            by_key[key] = bundle
+        self._by_key = MappingProxyType(by_key)
+
+    def resolve(self, bundle_id: str, version: str) -> FeatureBundle:
+        try:
+            return self._by_key[(bundle_id, version)]
+        except KeyError as exc:
+            raise ResearchError(f"unsupported feature bundle: {bundle_id}:{version}") from exc
+
+    def bundles(self) -> tuple[FeatureBundle, ...]:
+        return tuple(self._by_key[key] for key in sorted(self._by_key))
+
+
+@dataclass(frozen=True, slots=True)
+class ResolvedFeatureBundle:
+    bundle: FeatureBundle
+    outputs: tuple[str, ...]
+    parameters: Mapping[str, Any]
+
+
+@dataclass(frozen=True, slots=True)
+class ResolvedFeaturePlan:
+    bundles: tuple[ResolvedFeatureBundle, ...]
+    feature_set: FeatureSetSpec
+
+
+PHASE3_BUNDLE_REGISTRY = FeatureBundleRegistry(
     (
-        *MOMENTUM_FEATURES,
-        *VOLATILITY_FEATURES,
-        *VOLUME_FEATURES,
-        *MICROSTRUCTURE_FEATURES,
-        *FUNDING_FEATURES,
+        ReturnsMomentumBundle(),
+        VolatilityBundle(),
+        VolumeBundle(),
+        MicrostructureBundle(),
+        FundingBundle(),
     )
 )
-
-PHASE3_FEATURE_NAMES = (
-    "log_return_5m",
-    "log_return_15m",
-    "log_return_1h",
-    "log_return_4h",
-    "log_return_24h",
-    "realized_volatility_24h",
-    "intraday_range_4h",
-    "quote_volume_1h",
-    "quote_volume_zscore_24h",
-    "taker_buy_imbalance_1h",
-    "benchmark_return_1h",
-    "rolling_beta",
-    "residual_momentum_1h",
-    "residual_momentum_4h",
-    "residual_momentum_24h",
-    "market_volatility_regime",
-    "funding_rate_current",
-    "funding_rate_change",
+PHASE3_FEATURE_REGISTRY = FeatureRegistry(
+    definition for bundle in PHASE3_BUNDLE_REGISTRY.bundles() for definition in bundle.definitions()
 )
+PHASE3_FEATURE_SET_PATH = (
+    Path(__file__).resolve().parents[4] / "configs" / "feature_sets" / "phase3_baseline.yaml"
+)
+
+
+@lru_cache(maxsize=8)
+def load_feature_set_declaration(path: Path) -> FeatureSetDeclaration:
+    try:
+        payload = yaml.safe_load(path.read_text(encoding="utf-8"))
+        if not isinstance(payload, dict):
+            raise ResearchError("feature-set YAML root must be a mapping")
+        return FeatureSetDeclaration.model_validate(payload)
+    except (OSError, yaml.YAMLError, ValidationError) as exc:
+        raise ResearchError(f"cannot load feature-set file {path}: {exc}") from exc
+
+
+def _resolve_parameter(value: Any, config: ResearchConfig) -> Any:
+    if value == "$research.beta_window_hours":
+        return config.beta_window_hours
+    if isinstance(value, dict):
+        return {str(key): _resolve_parameter(item, config) for key, item in value.items()}
+    if isinstance(value, list):
+        return [_resolve_parameter(item, config) for item in value]
+    return value
+
+
+def resolve_feature_plan(
+    declaration: FeatureSetDeclaration,
+    *,
+    config: ResearchConfig,
+) -> ResolvedFeaturePlan:
+    resolved_bundles: list[ResolvedFeatureBundle] = []
+    definitions_by_output: dict[str, FeatureDefinition] = {}
+    per_feature_parameters: dict[str, Mapping[str, Any]] = {}
+    output_names: list[str] = []
+    for item in declaration.bundles:
+        bundle = PHASE3_BUNDLE_REGISTRY.resolve(item.bundle_id, item.version)
+        definitions = {definition.name: definition for definition in bundle.definitions()}
+        unknown = set(item.outputs).difference(definitions)
+        if unknown:
+            raise ResearchError(
+                f"bundle {item.bundle_id}:{item.version} declares unknown outputs: "
+                f"{sorted(unknown)}"
+            )
+        duplicate = set(output_names).intersection(item.outputs)
+        if duplicate:
+            raise ResearchError(f"feature outputs are declared more than once: {sorted(duplicate)}")
+        unknown_parameters = set(item.output_parameters).difference(item.outputs)
+        if unknown_parameters:
+            raise ResearchError(
+                f"bundle output parameters reference unknown outputs: {sorted(unknown_parameters)}"
+            )
+        parameters = _resolve_parameter(item.parameters, config)
+        resolved_bundles.append(
+            ResolvedFeatureBundle(
+                bundle=bundle,
+                outputs=item.outputs,
+                parameters=MappingProxyType(dict(parameters)),
+            )
+        )
+        for output in item.outputs:
+            definition = definitions[output]
+            output_names.append(output)
+            definitions_by_output[output] = definition
+            if output in item.output_parameters:
+                resolved = _resolve_parameter(item.output_parameters[output], config)
+                per_feature_parameters[definition.feature_id] = MappingProxyType(dict(resolved))
+    if len(set(declaration.outputs)) != len(declaration.outputs):
+        raise ResearchError("feature-set output order contains duplicates")
+    if set(declaration.outputs) != set(output_names):
+        raise ResearchError("feature-set output order differs from its bundle outputs")
+    feature_set = FeatureSetSpec(
+        feature_set_id=declaration.feature_set_id,
+        feature_ids=tuple(definitions_by_output[name].feature_id for name in declaration.outputs),
+        per_feature_parameters=per_feature_parameters,
+        version=declaration.version,
+        description=declaration.description,
+    )
+    return ResolvedFeaturePlan(bundles=tuple(resolved_bundles), feature_set=feature_set)
+
+
+def phase3_feature_plan(config: ResearchConfig) -> ResolvedFeaturePlan:
+    return resolve_feature_plan(
+        load_feature_set_declaration(PHASE3_FEATURE_SET_PATH),
+        config=config,
+    )
+
+
+PHASE3_FEATURE_NAMES = tuple(load_feature_set_declaration(PHASE3_FEATURE_SET_PATH).outputs)
+
+
+def compute_feature_plan(
+    context: FeatureComputeContext,
+    plan: ResolvedFeaturePlan,
+) -> Mapping[str, FeatureArray]:
+    outputs: dict[str, FeatureArray] = {}
+    for resolved in plan.bundles:
+        bundle_context = replace(context, prior_outputs=MappingProxyType(dict(outputs)))
+        computed = resolved.bundle.compute(bundle_context, resolved.parameters)
+        definition_names = {definition.name for definition in resolved.bundle.definitions()}
+        unknown_computed = set(computed).difference(definition_names)
+        if unknown_computed:
+            raise ResearchError(
+                f"bundle {resolved.bundle.bundle_id} returned undefined outputs: "
+                f"{sorted(unknown_computed)}"
+            )
+        missing = set(resolved.outputs).difference(computed)
+        if missing:
+            raise ResearchError(
+                f"bundle {resolved.bundle.bundle_id} omitted configured outputs: {sorted(missing)}"
+            )
+        for name in resolved.outputs:
+            array = np.asarray(computed[name], dtype=np.float64)
+            if array.shape != context.output_shape:
+                raise ResearchError(
+                    f"feature {name} has shape {array.shape}, expected {context.output_shape}"
+                )
+            if np.any(np.isinf(array)):
+                raise ResearchError(f"feature {name} contains infinite values")
+            if not np.any(np.isfinite(array)):
+                raise ResearchError(f"feature {name} contains no finite values")
+            array.setflags(write=False)
+            outputs[name] = array
+    return MappingProxyType(outputs)
 
 
 def phase3_feature_set(config: ResearchConfig) -> FeatureSetSpec:
-    feature_ids = tuple(
-        PHASE3_FEATURE_REGISTRY.resolve_name(name).feature_id for name in PHASE3_FEATURE_NAMES
-    )
-    rolling_beta_id = PHASE3_FEATURE_REGISTRY.resolve_name("rolling_beta").feature_id
-    return FeatureSetSpec(
-        feature_set_id="phase3_baseline_features:v1",
-        feature_ids=feature_ids,
-        per_feature_parameters={
-            rolling_beta_id: {"beta_window_hours": config.beta_window_hours},
-        },
-        version="v1",
-        description="Feature set extracted without numerical changes from the Phase 3 baseline.",
-    )
+    """Compatibility wrapper around the explicit Phase 3 bundle declaration."""
+
+    return phase3_feature_plan(config).feature_set
 
 
 __all__ = [
+    "PHASE3_BUNDLE_REGISTRY",
     "PHASE3_FEATURE_NAMES",
     "PHASE3_FEATURE_REGISTRY",
+    "PHASE3_FEATURE_SET_PATH",
+    "FeatureBundleDeclaration",
+    "FeatureBundleRegistry",
     "FeatureRegistry",
+    "FeatureSetDeclaration",
     "FeatureSetSpec",
+    "ResolvedFeatureBundle",
+    "ResolvedFeaturePlan",
+    "compute_feature_plan",
+    "load_feature_set_declaration",
+    "phase3_feature_plan",
     "phase3_feature_set",
+    "resolve_feature_plan",
 ]

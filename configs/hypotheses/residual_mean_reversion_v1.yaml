@@ -1,0 +1,18 @@
+hypothesis_id: HYP-RESMEANREV-0001
+title: Short-horizon residual momentum may mean-revert cross-sectionally
+mechanism: >-
+  One-hour and four-hour benchmark-residual moves may temporarily overshoot. A contrarian score
+  tests reversal while an optional volatility adjustment reduces the influence of high-volatility
+  observations; portfolio construction owns all exposure and risk limits.
+expected_direction: opposite to short-horizon residual momentum
+expected_horizon: 1h
+target_universe: fixed point-in-time Binance USD-M perpetual research universe
+preregistered_success_criteria:
+  purpose: discovery_only
+  cost_stress_multiplier: "1.5"
+  signal_delay_bars: 1
+  promotion_allowed: false
+status: READY
+notes: >-
+  Initial fixed, non-supervised specification. Results, including negative results, are exploratory
+  evidence and do not authorize promotion or trading.

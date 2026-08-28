@@ -2,11 +2,17 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from typing import Any
 
 import numpy as np
 
-from binance_algo.research.features.base import FeatureDefinition
+from binance_algo.common.errors import ResearchError
+from binance_algo.research.features.base import (
+    FeatureArray,
+    FeatureComputeContext,
+    FeatureDefinition,
+)
 
 
 def _zscore(values: np.ndarray[Any, np.dtype[np.float64]]) -> np.ndarray[Any, np.dtype[np.float64]]:
@@ -67,4 +73,28 @@ VOLUME_FEATURES = (
 )
 
 
-__all__ = ["VOLUME_FEATURES", "compute_volume_features"]
+class VolumeBundle:
+    bundle_id = "volume"
+    version = "v1"
+
+    def definitions(self) -> tuple[FeatureDefinition, ...]:
+        return VOLUME_FEATURES
+
+    def compute(
+        self,
+        context: FeatureComputeContext,
+        parameters: Mapping[str, Any],
+    ) -> Mapping[str, FeatureArray]:
+        if parameters:
+            raise ResearchError("volume:v1 does not accept parameters")
+        hourly, zscore = compute_volume_features(
+            context.quote_volume,
+            context.decision_indices,
+        )
+        return {
+            "quote_volume_1h": hourly,
+            "quote_volume_zscore_24h": zscore,
+        }
+
+
+__all__ = ["VOLUME_FEATURES", "VolumeBundle", "compute_volume_features"]

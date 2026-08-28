@@ -91,6 +91,10 @@ iniciada.
 - [x] Benchmark slow de 30 símbolos, 2 anos horários, 20 features e 100 trials
 - [x] README, architecture, operations, data contracts, research protocol, changelog e ADR 0014
 - [x] Bump coerente para 0.6.0 e aceite integral da Fase 3.5
+- [x] MVP exploratório: dashboard HTML/JSON offline, determinístico e sem dependências externas
+- [x] Perfis `discovery`/`full`, heartbeat por trial e benchmark real de campanhas
+- [x] Feature bundles explícitos dirigidos por YAML com equivalência exata do baseline
+- [x] Strategies `funding_carry:v1` e `residual_mean_reversion:v1` com campanhas discovery smoke
 
 ## Pending
 
