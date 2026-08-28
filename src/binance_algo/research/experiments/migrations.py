@@ -257,7 +257,26 @@ MIGRATION_2 = Migration(
     ),
 )
 
-MIGRATIONS = (MIGRATION_1, MIGRATION_2)
+MIGRATION_3 = Migration(
+    version=3,
+    name="research_ledger_indexes",
+    statements=(
+        """
+        CREATE INDEX idx_research_feature_evaluations_feature
+        ON research_feature_evaluations(feature_id, created_at_ms, evaluation_id)
+        """,
+        """
+        CREATE INDEX idx_research_feature_evaluations_run
+        ON research_feature_evaluations(run_id, created_at_ms, evaluation_id)
+        """,
+        """
+        CREATE INDEX idx_research_campaign_experiments_experiment
+        ON research_campaign_experiments(experiment_id, campaign_id)
+        """,
+    ),
+)
+
+MIGRATIONS = (MIGRATION_1, MIGRATION_2, MIGRATION_3)
 LATEST_SCHEMA_VERSION = MIGRATIONS[-1].version
 
 

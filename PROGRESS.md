@@ -74,11 +74,15 @@ baseline auditável; seu resultado negativo não foi promovido a alpha. A Fase 4
 - [x] Process workers locais, falha isolada, estados de campanha, resume e cache verificado
 - [x] CLI `research campaign plan/run/resume/status/compare` e report de todos os trials
 - [x] Smoke campaign com 9 combinações possíveis, 3 válidas e 6 rejeitadas pela constraint
+- [x] Fase 3.5 PR 7: feature evaluations imutáveis e decisões contextuais no registry
+- [x] Histórico por feature/hipótese, campanhas relacionadas e rejeições preservadas
+- [x] Ablation runner com oito deltas, artifacts verificados e regra registrada no contexto
+- [x] CLI `research ablation evaluate`, `feature history` e `hypothesis history`
 
 ## Pending
 
-- [ ] PR 7: ledger e ablações
-- [ ] PRs 8–9: robustez/promoção, performance e documentação final
+- [ ] PR 8: robustez, multiple testing e promotion gates
+- [ ] PR 9: performance e documentação final
 
 ## Blockers
 
@@ -117,7 +121,9 @@ baseline auditável; seu resultado negativo não foi promovido a alpha. A Fase 4
   `pytest -m "not network"` com 110 passed/2 deselected
 - gates PR 6: `ruff format --check` em 131 arquivos, `ruff check`, mypy estrito em 77 módulos e
   `pytest -m "not network"` com 115 passed/2 deselected
-- registry real: schema 2 em `research.sqlite3`, WAL e foreign keys ativos, 18 features e o
+- gates PR 7: `ruff format --check` em 135 arquivos, `ruff check`, mypy estrito em 79 módulos e
+  `pytest -m "not network"` com 119 passed/2 deselected
+- registry real: schema 3 em `research.sqlite3`, WAL e foreign keys ativos, 18 features e o
   feature set `phase3_baseline_features:v1`; registro repetido da hipótese
   `HYP-RESMOM-0002` permaneceu idempotente
 - testes `network`: não reexecutados neste incremento offline; referência anterior de 2 passed

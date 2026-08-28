@@ -97,7 +97,7 @@ uv run binance-algo --config configs/research.yaml research registry status
 uv run binance-algo --config configs/research.yaml research registry migrate
 ```
 
-`init` e `migrate` são idempotentes. `status` deve reportar schema 2, WAL e foreign keys ativos e
+`init` e `migrate` são idempotentes. `status` deve reportar schema 3, WAL e foreign keys ativos e
 os contadores do registry. Os comandos usam `storage.research_db`, cujo default é
 `var/state/research.sqlite3`; esse banco não deve ser substituído pelo manifesto de ingestão.
 
@@ -110,11 +110,18 @@ uv run binance-algo --config configs/research.yaml research hypothesis list
 uv run binance-algo --config configs/research.yaml research hypothesis show HYP-RESMOM-0002
 uv run binance-algo --config configs/research.yaml research feature list
 uv run binance-algo --config configs/research.yaml research feature show rolling_beta:v1
+uv run binance-algo --config configs/research.yaml research campaign run \
+  --file configs/experiments/residual_momentum_ablation.yaml
+uv run binance-algo --config configs/research.yaml research ablation evaluate \
+  residual_momentum_remove_1h
+uv run binance-algo --config configs/research.yaml research feature history \
+  residual_momentum_1h:v1
+uv run binance-algo --config configs/research.yaml research hypothesis history HYP-RESMOM-0002
 ```
 
 Repetir a criação com conteúdo idêntico não duplica linhas. Alterar uma definição imutável sob o
-mesmo ID falha explicitamente. Não edite o SQLite à mão e não trate a presença de um experimento
-como prova de execução: o artifact pipeline e o experiment runner entram no PR 5.
+mesmo ID falha explicitamente. Não edite o SQLite à mão. Relatórios do ledger são derivados; a
+fonte de verdade continua sendo o registry com foreign keys para runs e features.
 
 ## Falhas conhecidas e resposta
 

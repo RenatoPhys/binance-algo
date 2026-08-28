@@ -16,6 +16,7 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_valida
 from binance_algo.common.errors import ResearchError
 from binance_algo.config import ResearchConfig
 from binance_algo.research.datasets.references import DatasetReference, load_dataset_reference
+from binance_algo.research.experiments.ablation import AblationDeclaration
 from binance_algo.research.experiments.canonical import canonical_sha256, canonicalize
 from binance_algo.research.experiments.ids import experiment_id
 from binance_algo.research.experiments.models import (
@@ -130,6 +131,7 @@ class CampaignSpec(StrictCampaignModel):
     costs: ComponentSearch
     validation: CampaignValidation
     runner: CampaignRunnerSpec = Field(default_factory=CampaignRunnerSpec)
+    ablation: tuple[AblationDeclaration, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -322,6 +324,7 @@ def plan_campaign(
         "execution": source.execution.model_dump(mode="json"),
         "costs": source.costs.model_dump(mode="json"),
         "validation": source.validation.model_dump(mode="json"),
+        "ablation": [item.model_dump(mode="json") for item in source.ablation],
         "code_fingerprint": fingerprint.model_dump(mode="json"),
     }
     campaign_id = canonical_sha256(semantic_payload)

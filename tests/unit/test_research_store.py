@@ -130,13 +130,13 @@ def _initialized_store(path: Path) -> ResearchStore:
 def test_new_database_is_wal_foreign_keyed_and_idempotent(tmp_path: Path) -> None:
     settings = load_settings(BASE_CONFIG)
     store = ResearchStore(tmp_path / "research.sqlite3")
-    assert store.initialize() == 2
-    assert store.initialize() == 2
+    assert store.initialize() == 3
+    assert store.initialize() == 3
     first = sync_builtin_registry(store, research_config=settings.research)
     second = sync_builtin_registry(store, research_config=settings.research)
 
     status = store.status()
-    assert status.schema_version == status.latest_schema_version == 2
+    assert status.schema_version == status.latest_schema_version == 3
     assert status.journal_mode.lower() == "wal"
     assert status.foreign_keys
     assert status.counts["research_feature_definitions"] == first.feature_count
@@ -181,7 +181,7 @@ def test_migration_upgrade_and_failure_rollback(tmp_path: Path) -> None:
     finally:
         connection.close()
 
-    assert store.initialize() == 2
+    assert store.initialize() == 3
 
 
 def test_feature_set_sync_accepts_legacy_manifest_and_declared_ordinals(tmp_path: Path) -> None:

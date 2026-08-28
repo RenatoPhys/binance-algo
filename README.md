@@ -82,6 +82,12 @@ uv run binance-algo --config configs/research.yaml research campaign status \
   smoke_residual_momentum
 uv run binance-algo --config configs/research.yaml research campaign compare \
   smoke_residual_momentum
+uv run binance-algo --config configs/research.yaml research campaign run \
+  --file configs/experiments/residual_momentum_ablation.yaml
+uv run binance-algo --config configs/research.yaml research ablation evaluate \
+  residual_momentum_remove_1h
+uv run binance-algo --config configs/research.yaml research feature history \
+  residual_momentum_1h:v1
 ```
 
 Durante o recorder, consulte `http://127.0.0.1:9108/health/live`, `/health/ready` e `/metrics`.
@@ -220,8 +226,8 @@ O volume `./var` preserva datasets locais. A imagem fixa as duas flags de segura
 A Fase 3.5 é a plataforma de experimentos e pesquisa em escala. Golden regression, contratos,
 extração de residual momentum/neutral long-short e registries/views do dataset estão concluídos;
 consulte [docs/research_platform.md](docs/research_platform.md). `ResearchStore`, migrations,
-code fingerprint e identidade imutável de experimento também estão concluídos. O próximo
-incremento cria o pipeline atômico de artefatos e o experiment runner; campaigns e ledger ainda
-precisam ser entregues antes de qualquer pesquisa extensa. A Fase 4 não foi iniciada. Demo
+code fingerprint, identidade imutável, artifacts, experiment/campaign runners e ledger contextual
+também estão concluídos. Os próximos incrementos fecham robustez/multiple testing/promotion gates
+e performance/documentação final. A Fase 4 não foi iniciada. Demo
 Trading, alpha promovido e live permanecem fora de escopo; `LIVE_TRADING` e envio de ordens
 continuam impossíveis por configuração.

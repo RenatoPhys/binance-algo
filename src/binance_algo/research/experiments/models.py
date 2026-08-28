@@ -2,10 +2,11 @@
 
 from __future__ import annotations
 
+import math
 from enum import StrEnum
 from typing import Any, Self, cast
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from binance_algo.common.errors import ResearchError
 from binance_algo.research.datasets.references import DatasetReference
@@ -53,6 +54,25 @@ class MetricScope(StrEnum):
     LOCKBOX = "LOCKBOX"
     STRESS = "STRESS"
     CAMPAIGN = "CAMPAIGN"
+
+
+class FeatureEvaluationType(StrEnum):
+    UNIVARIATE = "UNIVARIATE"
+    INCREMENTAL = "INCREMENTAL"
+    ABLATION = "ABLATION"
+    PERMUTATION = "PERMUTATION"
+    REGIME_STABILITY = "REGIME_STABILITY"
+    TURNOVER_IMPACT = "TURNOVER_IMPACT"
+    COST_SENSITIVITY = "COST_SENSITIVITY"
+
+
+class FeatureDecision(StrEnum):
+    SUPPORTED = "SUPPORTED"
+    CONDITIONAL = "CONDITIONAL"
+    REJECTED = "REJECTED"
+    INCONCLUSIVE = "INCONCLUSIVE"
+    INVALIDATED = "INVALIDATED"
+    RETEST_REQUIRED = "RETEST_REQUIRED"
 
 
 class ArtifactPolicy(StrEnum):
@@ -178,6 +198,31 @@ class HypothesisSpec(ImmutableModel):
         return self
 
 
+class FeatureEvaluationSpec(ImmutableModel):
+    run_id: str = Field(min_length=1)
+    feature_id: str = Field(min_length=1)
+    evaluation_type: FeatureEvaluationType
+    scope: str = Field(min_length=1)
+    metric_name: str = Field(min_length=1)
+    metric_value: float | None = None
+    decision: FeatureDecision
+    decision_reason: str = Field(min_length=1)
+    context: dict[str, Any]
+
+    @field_validator("metric_value")
+    @classmethod
+    def validate_metric_value(cls, value: float | None) -> float | None:
+        if value is not None and not math.isfinite(value):
+            raise ValueError("feature evaluation metric must be finite when present")
+        return value
+
+    @model_validator(mode="after")
+    def validate_context(self) -> Self:
+        normalized = canonicalize(self.context, field_path="feature_evaluation.context")
+        object.__setattr__(self, "context", cast(dict[str, Any], normalized))
+        return self
+
+
 class ExperimentSpec(ImmutableModel):
     hypothesis_id: str = Field(min_length=1)
     campaign_id: str | None = None
@@ -233,6 +278,9 @@ __all__ = [
     "CodeFingerprint",
     "DatasetIdentity",
     "ExperimentSpec",
+    "FeatureDecision",
+    "FeatureEvaluationSpec",
+    "FeatureEvaluationType",
     "FeatureSetIdentity",
     "HypothesisSpec",
     "HypothesisStatus",

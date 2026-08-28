@@ -11,11 +11,17 @@ from hypothesis import strategies as st
 
 from binance_algo.common.errors import ResearchError
 from binance_algo.config import load_settings
+from binance_algo.research.experiments.ablation import (
+    AblationChange,
+    AblationDeclaration,
+    AblationRunner,
+)
 from binance_algo.research.experiments.campaign import CampaignSpec, plan_campaign
 from binance_algo.research.experiments.campaign_runner import CampaignRunner
 from binance_algo.research.experiments.models import (
     CampaignStatus,
     CodeFingerprint,
+    FeatureDecision,
     HypothesisSpec,
     HypothesisStatus,
     ProvenanceQuality,
@@ -246,6 +252,38 @@ def test_campaign_run_uses_processes_then_rerun_is_all_cache_hits(tmp_path: Path
         for _, identifier, _ in store.list_campaign_experiments(plan.campaign_id)
     }
 
+    baseline = plan.trials[0]
+    candidate = plan.trials[1]
+    declaration = AblationDeclaration(
+        feature_id="residual_momentum_1h:v1",
+        change=AblationChange.REMOVED,
+        baseline={
+            "strategy_parameters": baseline.tags["strategy_parameters"],
+            "portfolio_parameters": baseline.tags["portfolio_parameters"],
+        },
+        candidate={
+            "strategy_parameters": candidate.tags["strategy_parameters"],
+            "portfolio_parameters": candidate.tags["portfolio_parameters"],
+        },
+        decision_override=FeatureDecision.INCONCLUSIVE,
+        decision_reason="synthetic integration test does not interpret feature evidence",
+    )
+    ablation_runner = AblationRunner(
+        store=store,
+        data_root=data_root,
+        reports_root=tmp_path / "reports",
+    )
+    ablation = ablation_runner.evaluate_campaign(first.campaign, (declaration,))
+    assert len(ablation.evaluations[0].evaluations) == 8
+    assert ablation.report_json_path.is_file()
+    evaluation_ids = {item.evaluation_id for item in ablation.evaluations[0].evaluations}
+    repeated = ablation_runner.evaluate_campaign(first.campaign, (declaration,))
+    assert {item.evaluation_id for item in repeated.evaluations[0].evaluations} == evaluation_ids
+    assert len(store.list_feature_evaluations(feature_id=declaration.feature_id)) == 8
+    assert [
+        campaign.campaign_id for campaign in store.campaigns_using_feature(declaration.feature_id)
+    ] == [first.campaign.campaign_id]
+
     second = runner.run(plan)
     assert second.campaign.status is CampaignStatus.COMPLETED
     assert second.cache_hit_count == 3
@@ -254,6 +292,14 @@ def test_campaign_run_uses_processes_then_rerun_is_all_cache_hits(tmp_path: Path
         identifier: len(store.list_runs(experiment_id_value=identifier))
         for _, identifier, _ in store.list_campaign_experiments(plan.campaign_id)
     }
+    monthly = next(
+        artifact
+        for artifact in store.list_artifacts(ablation.evaluations[0].with_feature_run_id)
+        if artifact.artifact_type == "monthly_metrics"
+    )
+    (data_root / monthly.path).write_bytes(b"corrupt")
+    with pytest.raises(ResearchError, match="monthly metrics artifact is corrupt"):
+        ablation_runner.evaluate_campaign(first.campaign, (declaration,))
 
 
 def test_partial_campaign_resumes_without_rerunning_successes(

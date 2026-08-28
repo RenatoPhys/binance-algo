@@ -2,14 +2,14 @@
 
 ## Estado do incremento
 
-Os PRs 1 a 6 estão implementados. O golden baseline permanece como referência e o motor agora
+Os PRs 1 a 7 estão implementados. O golden baseline permanece como referência e o motor agora
 recebe `Strategy` e `PortfolioPolicy`, usando treino e teste reais em cada fold. Residual momentum
 e neutral long/short são as primeiras implementações dos contratos. Feature/label registries,
 roles de schema, dataset views e fingerprint `lineage_v2` estão ativos. A CLI legada usa essa
 rota por meio de um adaptador explícito; não existe segundo motor. `ResearchStore`, experiment
-registry, code fingerprint, artifact pipeline, experiment runner e campaign runner estão ativos.
-Ledger, multiple-testing adjustment e promotion gates ainda não estão implementados e não devem
-ser simulados por scripts ad hoc.
+registry, code fingerprint, artifact pipeline, experiment runner, campaign runner e feature
+ledger estão ativos. Multiple-testing adjustment e promotion gates ainda não estão implementados
+e não devem ser simulados por scripts ad hoc.
 
 ## Fronteiras arquiteturais
 
@@ -104,7 +104,7 @@ paths absolutos são rejeitados. Trocar dataset, feature set, label, parâmetros
 seed, commit ou diff cria outra identidade. Métricas e checksums de artefatos não fazem parte
 dela: após sucesso, eles formam um `result_digest` separado.
 
-`var/state/research.sqlite3` é independente do manifesto de ingestão. As migrations 1–2 criam 12
+`var/state/research.sqlite3` é independente do manifesto de ingestão. As migrations 1–3 criam 12
 tabelas de domínio e seus índices, com WAL, foreign keys, `busy_timeout` e rollback atômico. Um
 experimento é imutável; rerun aloca uma nova tentativa. Runs seguem
 `PENDING -> QUEUED -> RUNNING -> SUCCEEDED|FAILED|STALE`, com cancelamento antes da execução e
@@ -161,11 +161,28 @@ O smoke `configs/experiments/smoke_residual_momentum.yaml` possui nove combinaç
 três válidas e seis removidas pela constraint de soma dos pesos. Gráficos permanecem desligados e
 os artifacts usam policy `summary`.
 
+## Feature ledger e ablações
+
+`research_feature_evaluations` preserva decisões imutáveis por run, feature, métrica e contexto.
+Um registro exige run `SUCCEEDED`, feature existente, valor finito quando presente e motivo não
+vazio. Seu ID é derivado do conteúdo canônico; repetir a mesma avaliação é idempotente. Decisões
+`SUPPORTED`, `REJECTED` ou outras nunca alteram automaticamente o status global da definição.
+
+Campanhas podem declarar pares de ablação por seletores de parâmetros. O runner exige baseline e
+candidate únicos, verifica que os specs diferem apenas nos parâmetros da strategy e valida o
+checksum de `monthly_metrics.parquet`. Os oito deltas usam uma convenção única: **com feature
+menos sem feature**, inclusive em `REMOVED`. A regra, runs, tags, métricas de origem, folds e
+stress de custos ficam em `context_json`.
+
+`research ablation evaluate` grava as avaliações no registry e gera uma visão JSON/Markdown.
+`research feature history` e `research hypothesis history` regeneram o histórico completo,
+incluindo rejeições. O exemplo `residual_momentum_ablation.yaml` testa remoção do componente 1h
+com redistribuição declarada do peso; ele registra evidência contextual, não promoção de alpha.
+
 ## Próximos incrementos
 
-1. adicionar ledger e ablações;
-2. adicionar robustez, multiple testing e promotion gates;
-3. otimizar o painel e concluir documentação/aceite.
+1. adicionar robustez, multiple testing e promotion gates;
+2. otimizar o painel e concluir documentação/aceite.
 
-Nenhuma campanha extensa deve ser executada antes de existirem separação, registry, artifacts e
-runner (PRs 1 a 6).
+Campanhas extensas continuam condicionadas aos guards, protocolo de pesquisa e gates de promoção;
+o ledger não transforma screening repetido em evidência independente.
