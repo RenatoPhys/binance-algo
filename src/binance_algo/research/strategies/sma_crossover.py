@@ -53,18 +53,13 @@ class SmaCrossoverParameters:
             raise ResearchError("fast SMA window must be shorter than slow SMA window")
 
 
-def _score_panel(
+def causal_sma_crossover(
     panel: PanelData,
     *,
     parameters: SmaCrossoverParameters,
-    context: FoldContext,
-) -> StrategyScores:
-    test_slice = panel.time_slice(context.test_start_ms, context.test_end_ms)
-    panel.require_complete_range(
-        context.test_start_ms,
-        context.test_end_ms,
-        role="SMA crossover scoring",
-    )
+) -> np.ndarray[Any, np.dtype[np.float64]]:
+    """Return the raw causal log fast/slow SMA ratio for the complete panel."""
+
     hourly_returns = np.asarray(
         panel.matrix("log_return_1h"),
         dtype=np.float64,
@@ -94,6 +89,22 @@ def _score_panel(
         valid = np.isfinite(crossover[row])
         last_valid[valid] = crossover[row, valid]
         crossover[row, ~valid] = last_valid[~valid]
+    return crossover
+
+
+def _score_panel(
+    panel: PanelData,
+    *,
+    parameters: SmaCrossoverParameters,
+    context: FoldContext,
+) -> StrategyScores:
+    test_slice = panel.time_slice(context.test_start_ms, context.test_end_ms)
+    panel.require_complete_range(
+        context.test_start_ms,
+        context.test_end_ms,
+        role="SMA crossover scoring",
+    )
+    crossover = causal_sma_crossover(panel, parameters=parameters)
     test_crossover = crossover[test_slice]
     if np.any(~np.isfinite(test_crossover)):
         raise ResearchError(
@@ -177,4 +188,5 @@ __all__ = [
     "FittedSmaCrossoverStrategy",
     "SmaCrossoverParameters",
     "SmaCrossoverStrategy",
+    "causal_sma_crossover",
 ]

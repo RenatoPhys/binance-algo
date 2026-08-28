@@ -1,0 +1,26 @@
+hypothesis_id: HYP-SELECTIVE-SMA-STRENGTH-0001
+title: Absolute cross-sectional SMA dispersion may identify tradable trend regimes
+mechanism: >-
+  Raw 12-hour versus 168-hour SMA distance preserves absolute trend magnitude that is discarded by
+  cross-sectional z-scoring. Entering or refreshing a daily neutral long-short portfolio only when
+  the raw score spread exceeds a preregistered feature-distribution threshold may avoid weak,
+  cost-dominated regimes while retaining the slower relative trend effect.
+expected_direction: long the strongest raw SMA trend and short the weakest only in dispersed regimes
+expected_horizon: 24h holding interval with hourly mark-to-market
+target_universe: fixed point-in-time BTCUSDT, ETHUSDT and SOLUSDT research universe
+preregistered_success_criteria:
+  development_end: "2024-08-27"
+  development_net_total_return_min: "0.0"
+  development_net_sharpe_min: "0.5"
+  development_cost_1_5x_total_return_min: "0.0"
+  development_profitable_fold_fraction_min: "0.55"
+  final_oos_days: 728
+  final_net_total_return_min: "0.0"
+  final_net_sharpe_min: "0.5"
+  final_cost_1_5x_total_return_min: "0.0"
+  promotion_allowed: false
+status: READY
+notes: >-
+  Minimum-spread values approximate the 25th, 50th and 75th percentiles of the raw feature spread
+  in development data. They were selected without using development labels. At most one candidate
+  may be frozen for final two-year OOS confirmation.

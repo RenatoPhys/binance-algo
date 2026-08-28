@@ -28,6 +28,7 @@ class NeutralLongShortSpec(BaseModel):
 
 class BufferedNeutralLongShortSpec(NeutralLongShortSpec):
     rebalance_interval_hours: int = Field(ge=1, le=24 * 30)
+    minimum_score_spread: float = Field(default=0.0, ge=0)
 
 
 PortfolioPolicyFactory = Callable[[Mapping[str, Any]], PortfolioPolicy]

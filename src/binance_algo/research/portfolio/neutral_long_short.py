@@ -59,6 +59,7 @@ class BufferedNeutralLongShortParameters:
     gross_exposure: float
     annual_volatility_target: float
     max_symbol_weight: float
+    minimum_score_spread: float = 0.0
 
     def __post_init__(self) -> None:
         NeutralLongShortParameters(
@@ -69,6 +70,8 @@ class BufferedNeutralLongShortParameters:
         )
         if not 1 <= self.rebalance_interval_hours <= 24 * 30:
             raise ResearchError("rebalance interval must be between one hour and 30 days")
+        if not math.isfinite(self.minimum_score_spread) or self.minimum_score_spread < 0:
+            raise ResearchError("minimum score spread must be finite and non-negative")
 
     def base_parameters(self) -> NeutralLongShortParameters:
         return NeutralLongShortParameters(
@@ -242,6 +245,14 @@ def _buffered_target_weight_frame(
     base_parameters = parameters.base_parameters()
     for period, decision_time in enumerate(times):
         if last_rebalance_ms is not None and int(decision_time) - last_rebalance_ms < interval_ms:
+            targets[period] = previous_weights
+            continue
+        score_spread = float(np.max(arrays["score"][period]) - np.min(arrays["score"][period]))
+        if score_spread < parameters.minimum_score_spread:
+            previous_weights = np.zeros(len(symbols), dtype=np.float64)
+            previous_top = None
+            previous_bottom = None
+            last_rebalance_ms = int(decision_time)
             targets[period] = previous_weights
             continue
         top = int(np.argmax(arrays["score"][period]))

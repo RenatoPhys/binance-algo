@@ -253,6 +253,22 @@ def test_sma_crossover_factory_is_causal_fixed_and_directional() -> None:
     assert strategy.target_column() is None
     assert first.filter(pl.col("symbol") == "BTCUSDT")["score"].item() > 0
     assert first.filter(pl.col("symbol") == "SOLUSDT")["score"].item() < 0
+    strength_strategy = build_strategy(
+        "sma_trend_strength",
+        "v1",
+        {"fast_window_hours": 4, "slow_window_hours": 24},
+    )
+    strength_scores = (
+        strength_strategy.fit_panel(panel, target=None, context=context)
+        .score_panel(panel, context=context)
+        .frame
+    )
+    first_strength = strength_scores.filter(pl.col("decision_time_ms") == int(times[72])).sort(
+        "symbol"
+    )
+    assert first_strength.filter(pl.col("symbol") == "BTCUSDT")["score"].item() > 0
+    assert first_strength.filter(pl.col("symbol") == "SOLUSDT")["score"].item() < 0
+    assert float(first_strength["score"].std()) < 1
     with pytest.raises(ResearchError, match="shorter than"):
         build_strategy(
             "sma_crossover",
@@ -342,6 +358,18 @@ def test_buffered_neutral_long_short_holds_weights_between_rebalances() -> None:
     assert first["target_weight"].to_list() == second["target_weight"].to_list()
     assert first.filter(pl.col("symbol") == "BTCUSDT")["target_weight"].item() > 0
 
+    gated = BufferedNeutralLongShortPolicy(
+        BufferedNeutralLongShortParameters(
+            no_trade_score_band=0.0,
+            rebalance_interval_hours=2,
+            gross_exposure=0.5,
+            annual_volatility_target=0.15,
+            max_symbol_weight=0.25,
+            minimum_score_spread=5.0,
+        )
+    ).target_weights(scores, market_state, context=_context())
+    assert gated["target_weight"].to_list() == [0.0] * 6
+
 
 def test_buffered_neutral_long_short_factory_is_strict() -> None:
     parameters = {
@@ -350,12 +378,14 @@ def test_buffered_neutral_long_short_factory_is_strict() -> None:
         "gross_exposure": 0.5,
         "annual_volatility_target": 0.15,
         "max_symbol_weight": 0.25,
+        "minimum_score_spread": 0.05,
     }
 
     policy = build_portfolio_policy("buffered_neutral_long_short", "v1", parameters)
 
     assert policy.policy_id == "buffered_neutral_long_short"
     assert policy.parameters.rebalance_interval_hours == 12
+    assert policy.parameters.minimum_score_spread == 0.05
     with pytest.raises(ResearchError, match="extra_forbidden"):
         build_portfolio_policy(
             "buffered_neutral_long_short",

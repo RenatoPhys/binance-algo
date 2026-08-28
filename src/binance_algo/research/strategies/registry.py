@@ -25,6 +25,7 @@ from binance_algo.research.strategies.sma_crossover import (
     SmaCrossoverParameters,
     SmaCrossoverStrategy,
 )
+from binance_algo.research.strategies.sma_trend_strength import SmaTrendStrengthStrategy
 
 
 class ResidualMomentumSpec(BaseModel):
@@ -99,6 +100,14 @@ def build_sma_crossover(parameters: Mapping[str, Any]) -> SmaCrossoverStrategy:
         raise ResearchError(f"invalid sma_crossover parameters: {exc}") from exc
 
 
+def build_sma_trend_strength(parameters: Mapping[str, Any]) -> SmaTrendStrengthStrategy:
+    try:
+        parsed = SmaCrossoverSpec.model_validate(dict(parameters))
+        return SmaTrendStrengthStrategy(parameters=SmaCrossoverParameters(**parsed.model_dump()))
+    except (TypeError, ValueError, ResearchError) as exc:
+        raise ResearchError(f"invalid sma_trend_strength parameters: {exc}") from exc
+
+
 STRATEGY_FACTORIES: dict[tuple[str, str], StrategyFactory] = {
     ("funding_carry", "1"): build_funding_carry,
     ("funding_carry", "v1"): build_funding_carry,
@@ -108,6 +117,8 @@ STRATEGY_FACTORIES: dict[tuple[str, str], StrategyFactory] = {
     ("residual_mean_reversion", "v1"): build_residual_mean_reversion,
     ("sma_crossover", "1"): build_sma_crossover,
     ("sma_crossover", "v1"): build_sma_crossover,
+    ("sma_trend_strength", "1"): build_sma_trend_strength,
+    ("sma_trend_strength", "v1"): build_sma_trend_strength,
 }
 
 
@@ -134,5 +145,6 @@ __all__ = [
     "build_residual_mean_reversion",
     "build_residual_momentum",
     "build_sma_crossover",
+    "build_sma_trend_strength",
     "build_strategy",
 ]
