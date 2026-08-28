@@ -37,4 +37,5 @@ idênticos nos artefatos históricos.
 - O engine não conhece nomes de features nem pesos de residual momentum.
 - A configuração global específica da estratégia permanece somente no adaptador de compatibilidade
   e será migrada para specs estritas em incremento posterior.
-- A proteção ainda é contratual; roles de schema e dataset views persistidos entram no PR 3.
+- O PR 3 complementa a allowlist com registries e roles persistidos de schema; prefixos continuam
+  como defesa adicional.

@@ -16,73 +16,40 @@ import polars as pl
 from binance_algo.common.errors import ResearchError
 from binance_algo.config import ResearchConfig
 from binance_algo.data.storage import LocalFilesystemStorage
+from binance_algo.research.datasets.fingerprints import (
+    FINGERPRINT_METHOD,
+    InputFileFingerprint,
+    build_lineage_payload,
+    collect_research_lineage,
+    lineage_fingerprint,
+    logical_content_checksum,
+    sha256_path,
+)
+from binance_algo.research.datasets.schemas import RESEARCH_DATASET_SCHEMA_V2
+from binance_algo.research.features.funding import compute_asof_funding
+from binance_algo.research.features.microstructure import compute_taker_imbalance
+from binance_algo.research.features.momentum import compute_log_returns, compute_residual_momentum
+from binance_algo.research.features.registry import (
+    PHASE3_FEATURE_REGISTRY,
+    FeatureSetSpec,
+    phase3_feature_set,
+)
+from binance_algo.research.features.volatility import (
+    compute_market_volatility_regime,
+    compute_volatility_features,
+)
+from binance_algo.research.features.volume import compute_volume_features
+from binance_algo.research.labels.forward_returns import (
+    GROSS_FORWARD_RETURN_1H,
+    PHASE3_LABEL_REGISTRY,
+)
 
 MINUTE_MS = 60_000
 HOUR_MINUTES = 60
 DAY_MINUTES = 1_440
-FEATURE_VERSION = "phase3-v1"
-
-FEATURE_DEFINITIONS: tuple[dict[str, object], ...] = (
-    {
-        "name": "log_return_5m",
-        "window": "5m",
-        "semantics": "log(close_t / close_t-5m), closed bars only",
-    },
-    {
-        "name": "log_return_15m",
-        "window": "15m",
-        "semantics": "log(close_t / close_t-15m), closed bars only",
-    },
-    {
-        "name": "log_return_1h",
-        "window": "1h",
-        "semantics": "log(close_t / close_t-1h), closed bars only",
-    },
-    {
-        "name": "log_return_4h",
-        "window": "4h",
-        "semantics": "log(close_t / close_t-4h), closed bars only",
-    },
-    {
-        "name": "log_return_24h",
-        "window": "24h",
-        "semantics": "log(close_t / close_t-24h), closed bars only",
-    },
-    {
-        "name": "realized_volatility_24h",
-        "window": "24h",
-        "semantics": "sqrt(sum of squared one-minute log returns through cutoff)",
-    },
-    {
-        "name": "intraday_range_4h",
-        "window": "4h",
-        "semantics": "rolling high / rolling low - 1 through cutoff",
-    },
-    {
-        "name": "quote_volume_zscore_24h",
-        "window": "24 hourly observations",
-        "semantics": "z-score of trailing one-hour quote volume, including current hour",
-    },
-    {
-        "name": "taker_buy_imbalance_1h",
-        "window": "1h",
-        "semantics": "2 * taker-buy quote volume / quote volume - 1",
-    },
-    {
-        "name": "rolling_beta_7d",
-        "window": "configured trailing hourly window",
-        "semantics": "causal OLS beta to leave-one-anchor-out BTC/ETH benchmark",
-    },
-    {
-        "name": "residual_momentum_1h_4h_24h",
-        "window": "1h, 4h, 24h",
-        "semantics": "sum of causal residual hourly returns",
-    },
-    {
-        "name": "funding_rate_current_and_change",
-        "window": "last public event at or before cutoff",
-        "semantics": "as-of join; never backward-filled",
-    },
+DATASET_SCHEMA_VERSION = RESEARCH_DATASET_SCHEMA_V2.version
+FEATURE_DEFINITIONS = tuple(
+    definition.to_manifest() for definition in PHASE3_FEATURE_REGISTRY.definitions()
 )
 
 
@@ -105,20 +72,18 @@ class DatasetAudit:
 class ResearchDatasetResult:
     parquet_path: str
     manifest_path: str
+    dataset_id: str
     dataset_version: str
     feature_version: str
     universe_version: str
+    content_checksum: str
+    parquet_checksum: str
+    fingerprint_method: str
     audit: DatasetAudit
 
 
 def _feature_version(config: ResearchConfig) -> str:
-    payload = {
-        "base": FEATURE_VERSION,
-        "definitions": FEATURE_DEFINITIONS,
-        "decision_interval_minutes": config.decision_interval_minutes,
-        "beta_window_hours": config.beta_window_hours,
-    }
-    return hashlib.sha256(orjson.dumps(payload, option=orjson.OPT_SORT_KEYS)).hexdigest()[:16]
+    return phase3_feature_set(config).canonical_checksum[:16]
 
 
 def _universe_version(symbols: tuple[str, ...]) -> str:
@@ -236,42 +201,6 @@ def _validate_klines(klines: pl.DataFrame, symbols: tuple[str, ...]) -> dict[str
     return frames
 
 
-def _zscore(values: np.ndarray[Any, np.dtype[np.float64]]) -> np.ndarray[Any, np.dtype[np.float64]]:
-    mean = float(np.mean(values))
-    standard_deviation = float(np.std(values))
-    if standard_deviation <= 1e-15:
-        return np.zeros_like(values)
-    return (values - mean) / standard_deviation
-
-
-def _asof_funding(
-    funding: pl.DataFrame,
-    *,
-    symbol: str,
-    decision_times: np.ndarray[Any, np.dtype[np.int64]],
-) -> tuple[np.ndarray[Any, np.dtype[np.float64]], np.ndarray[Any, np.dtype[np.float64]]]:
-    events = (
-        funding.filter(pl.col("symbol") == symbol)
-        .group_by("funding_time_ms")
-        .agg(pl.col("funding_rate").sum())
-        .sort("funding_time_ms")
-    )
-    current = np.full(len(decision_times), np.nan, dtype=np.float64)
-    change = np.full(len(decision_times), np.nan, dtype=np.float64)
-    if events.is_empty():
-        return current, change
-    event_times = np.asarray(events["funding_time_ms"].to_numpy(), dtype=np.int64)
-    event_rates = np.asarray(events["funding_rate"].to_numpy(), dtype=np.float64)
-    positions = np.searchsorted(event_times, decision_times, side="right") - 1
-    visible = positions >= 0
-    current[visible] = event_rates[positions[visible]]
-    prior_visible = positions >= 1
-    change[prior_visible] = (
-        event_rates[positions[prior_visible]] - event_rates[positions[prior_visible] - 1]
-    )
-    return current, change
-
-
 def _outcome_funding(
     funding: pl.DataFrame,
     *,
@@ -329,7 +258,6 @@ def build_point_in_time_frame(
         raise ResearchError("insufficient history after feature warm-up for research dataset")
 
     symbol_count = len(symbols)
-    decision_count = len(decision_indices)
     opens = np.column_stack(
         [np.asarray(frames[symbol]["open"].to_numpy(), dtype=np.float64) for symbol in symbols]
     )
@@ -364,86 +292,42 @@ def build_point_in_time_frame(
     minute_log_returns = np.full_like(log_close, np.nan)
     minute_log_returns[1:] = np.diff(log_close, axis=0)
     horizons = (5, 15, 60, 240, 1_440)
-    horizon_returns = {
-        window: log_close[decision_indices] - log_close[decision_indices - window]
-        for window in horizons
-    }
+    horizon_returns = compute_log_returns(
+        log_close,
+        decision_indices,
+        horizons=horizons,
+    )
     hourly_returns = horizon_returns[60]
-    realized_volatility = np.empty((decision_count, symbol_count), dtype=np.float64)
-    intraday_range = np.empty_like(realized_volatility)
-    hourly_quote_volume = np.empty_like(realized_volatility)
-    taker_imbalance = np.empty_like(realized_volatility)
-    for row_index, minute_index in enumerate(decision_indices):
-        day_slice = slice(minute_index - DAY_MINUTES + 1, minute_index + 1)
-        range_slice = slice(minute_index - 240 + 1, minute_index + 1)
-        hour_slice = slice(minute_index - 60 + 1, minute_index + 1)
-        realized_volatility[row_index] = np.sqrt(
-            np.nansum(np.square(minute_log_returns[day_slice]), axis=0)
-        )
-        intraday_range[row_index] = (
-            np.max(highs[range_slice], axis=0) / np.min(lows[range_slice], axis=0) - 1
-        )
-        hourly_quote_volume[row_index] = np.sum(quote_volume[hour_slice], axis=0)
-        total_taker = np.sum(taker_quote_volume[hour_slice], axis=0)
-        taker_imbalance[row_index] = (
-            np.divide(
-                2 * total_taker,
-                hourly_quote_volume[row_index],
-                out=np.full(symbol_count, np.nan),
-                where=hourly_quote_volume[row_index] > 0,
-            )
-            - 1
-        )
-
-    volume_zscore = np.full_like(hourly_quote_volume, np.nan)
-    for row_index in range(23, decision_count):
-        for symbol_index in range(symbol_count):
-            volume_zscore[row_index, symbol_index] = _zscore(
-                hourly_quote_volume[row_index - 23 : row_index + 1, symbol_index]
-            )[-1]
-
+    realized_volatility, intraday_range = compute_volatility_features(
+        minute_log_returns=minute_log_returns,
+        highs=highs,
+        lows=lows,
+        decision_indices=decision_indices,
+    )
+    hourly_quote_volume, volume_zscore = compute_volume_features(
+        quote_volume,
+        decision_indices,
+    )
+    taker_imbalance = compute_taker_imbalance(
+        taker_quote_volume=taker_quote_volume,
+        hourly_quote_volume=hourly_quote_volume,
+        decision_indices=decision_indices,
+    )
+    (
+        benchmark_returns,
+        beta,
+        residual_returns,
+        residual_momentum_4h,
+        residual_momentum_24h,
+    ) = compute_residual_momentum(
+        hourly_returns,
+        symbols=symbols,
+        beta_window_hours=config.beta_window_hours,
+    )
     btc_index = symbols.index("BTCUSDT")
     eth_index = symbols.index("ETHUSDT")
     market_returns = (hourly_returns[:, btc_index] + hourly_returns[:, eth_index]) / 2
-    benchmark_returns = np.tile(market_returns[:, None], (1, symbol_count))
-    benchmark_returns[:, btc_index] = hourly_returns[:, eth_index]
-    benchmark_returns[:, eth_index] = hourly_returns[:, btc_index]
-    beta = np.full_like(hourly_returns, np.nan)
-    residual_returns = np.full_like(hourly_returns, np.nan)
-    beta_window = config.beta_window_hours
-    for row_index in range(beta_window - 1, decision_count):
-        start = row_index - beta_window + 1
-        for symbol_index in range(symbol_count):
-            x = benchmark_returns[start : row_index + 1, symbol_index]
-            y = hourly_returns[start : row_index + 1, symbol_index]
-            variance = float(np.var(x))
-            if variance <= 1e-18:
-                continue
-            beta[row_index, symbol_index] = float(
-                np.mean((x - np.mean(x)) * (y - np.mean(y))) / variance
-            )
-            residual_returns[row_index, symbol_index] = (
-                hourly_returns[row_index, symbol_index]
-                - beta[row_index, symbol_index] * benchmark_returns[row_index, symbol_index]
-            )
-
-    residual_momentum_4h = np.full_like(residual_returns, np.nan)
-    residual_momentum_24h = np.full_like(residual_returns, np.nan)
-    for row_index in range(decision_count):
-        if row_index >= 3:
-            residual_momentum_4h[row_index] = np.sum(
-                residual_returns[row_index - 3 : row_index + 1], axis=0
-            )
-        if row_index >= 23:
-            residual_momentum_24h[row_index] = np.sum(
-                residual_returns[row_index - 23 : row_index + 1], axis=0
-            )
-
-    market_volatility_regime = np.full(decision_count, np.nan, dtype=np.float64)
-    for row_index in range(23, decision_count):
-        market_volatility_regime[row_index] = float(
-            np.std(market_returns[row_index - 23 : row_index + 1]) * math.sqrt(24 * 365)
-        )
+    market_volatility_regime = compute_market_volatility_regime(market_returns)
 
     decision_times = close_times[decision_indices]
     execution_indices = decision_indices + 1
@@ -466,7 +350,11 @@ def build_point_in_time_frame(
     funding_change = np.empty_like(hourly_returns)
     outcome_funding = np.empty_like(hourly_returns)
     for symbol_index, symbol in enumerate(symbols):
-        current, change = _asof_funding(funding, symbol=symbol, decision_times=decision_times)
+        current, change = compute_asof_funding(
+            funding,
+            symbol=symbol,
+            decision_times=decision_times,
+        )
         funding_current[:, symbol_index] = current
         funding_change[:, symbol_index] = change
         outcome_funding[:, symbol_index] = _outcome_funding(
@@ -536,7 +424,7 @@ def build_point_in_time_frame(
                     "outcome_quote_volume_1h": float(outcome_quote_volume[row_index, symbol_index]),
                     "outcome_funding_rate_1h": float(outcome_funding[row_index, symbol_index]),
                     "execution_lag_bars": 1,
-                    "dataset_schema_version": 1,
+                    "dataset_schema_version": DATASET_SCHEMA_VERSION,
                 }
             )
     if not rows:
@@ -556,11 +444,7 @@ def build_point_in_time_frame(
 
 def audit_point_in_time_frame(frame: pl.DataFrame, *, symbols: tuple[str, ...]) -> DatasetAudit:
     feature_columns = [
-        column
-        for column in frame.columns
-        if column.startswith(("log_return_", "realized_", "intraday_", "quote_volume_zscore"))
-        or column.startswith(("taker_buy_", "benchmark_", "rolling_beta"))
-        or column.startswith(("residual_momentum_", "market_volatility_", "funding_rate_"))
+        column for column in frame.columns if column in RESEARCH_DATASET_SCHEMA_V2.feature_columns()
     ]
     duplicate_count = frame.select(
         pl.struct("decision_time_ms", "symbol").is_duplicated().sum()
@@ -601,15 +485,37 @@ def persist_research_dataset(
     *,
     frame: pl.DataFrame,
     audit: DatasetAudit,
-    feature_version: str,
+    feature_set: FeatureSetSpec,
     universe_version: str,
+    input_files: tuple[InputFileFingerprint, ...],
+    source_start_time_ms: int,
+    source_end_time_ms: int,
     storage: LocalFilesystemStorage,
     compression: str,
     symbols: tuple[str, ...],
     config: ResearchConfig,
 ) -> ResearchDatasetResult:
-    digest_payload = orjson.dumps(frame.to_dicts(), option=orjson.OPT_SORT_KEYS)
-    dataset_version = hashlib.sha256(digest_payload).hexdigest()[:16]
+    builder_parameters = {
+        "decision_interval_minutes": config.decision_interval_minutes,
+        "forward_horizon_minutes": config.forward_horizon_minutes,
+        "beta_window_hours": config.beta_window_hours,
+        "funding_required": config.funding_required,
+    }
+    fingerprint_payload = build_lineage_payload(
+        input_files=input_files,
+        dataset_schema_version=DATASET_SCHEMA_VERSION,
+        universe_version=universe_version,
+        symbols=symbols,
+        start_time_ms=source_start_time_ms,
+        end_time_ms=source_end_time_ms,
+        feature_set=feature_set,
+        label=GROSS_FORWARD_RETURN_1H,
+        builder_parameters=builder_parameters,
+    )
+    dataset_id = lineage_fingerprint(fingerprint_payload)
+    dataset_version = dataset_id[:16]
+    feature_version = feature_set.canonical_checksum[:16]
+    content_checksum = logical_content_checksum(frame)
     parquet_path = storage.path(
         "gold",
         "binance",
@@ -620,19 +526,36 @@ def persist_research_dataset(
     )
     manifest_path = parquet_path.with_suffix(".json")
     storage.write_parquet_atomic(parquet_path, frame, compression=compression)
+    parquet_checksum = sha256_path(parquet_path)
     storage.write_json_atomic(
         manifest_path,
         {
+            "dataset_id": dataset_id,
             "dataset_version": dataset_version,
-            "dataset_schema_version": 1,
+            "dataset_schema_version": DATASET_SCHEMA_VERSION,
+            "dataset_schema": RESEARCH_DATASET_SCHEMA_V2.to_manifest(),
+            "fingerprint_method": FINGERPRINT_METHOD,
+            "fingerprint_payload": fingerprint_payload,
+            "content_checksum": content_checksum,
+            "parquet_checksum": parquet_checksum,
+            "row_count": audit.row_count,
+            "start_time_ms": audit.min_decision_time_ms,
+            "end_time_ms": audit.max_decision_time_ms,
+            "source_start_time_ms": source_start_time_ms,
+            "source_end_time_ms": source_end_time_ms,
+            "feature_set_id": feature_set.feature_set_id,
+            "feature_set": feature_set.to_manifest(),
             "feature_version": feature_version,
             "universe_version": universe_version,
             "universe_policy": "fixed seed chosen ex ante by the project specification",
             "symbols": symbols,
             "feature_definitions": FEATURE_DEFINITIONS,
-            "label_semantics": (
-                "future_return_1h starts at the next one-minute open and ends 60 minutes later"
+            "label_id": GROSS_FORWARD_RETURN_1H.label_id,
+            "label_definition": GROSS_FORWARD_RETURN_1H.to_manifest(),
+            "available_label_definitions": tuple(
+                definition.to_manifest() for definition in PHASE3_LABEL_REGISTRY.definitions()
             ),
+            "label_semantics": GROSS_FORWARD_RETURN_1H.semantics,
             "funding_semantics": "last event at or before decision; no backward fill",
             "audit": asdict(audit),
             "research_config": config.model_dump(mode="json"),
@@ -641,9 +564,13 @@ def persist_research_dataset(
     return ResearchDatasetResult(
         parquet_path=str(parquet_path),
         manifest_path=str(manifest_path),
+        dataset_id=dataset_id,
         dataset_version=dataset_version,
         feature_version=feature_version,
         universe_version=universe_version,
+        content_checksum=content_checksum,
+        parquet_checksum=parquet_checksum,
+        fingerprint_method=FINGERPRINT_METHOD,
         audit=audit,
     )
 
@@ -651,6 +578,7 @@ def persist_research_dataset(
 def build_and_persist_research_dataset(
     *,
     database_path: Path,
+    state_db_path: Path,
     storage: LocalFilesystemStorage,
     symbols: tuple[str, ...],
     start_time_ms: int,
@@ -658,6 +586,13 @@ def build_and_persist_research_dataset(
     config: ResearchConfig,
     compression: str,
 ) -> ResearchDatasetResult:
+    input_files = collect_research_lineage(
+        state_db_path=state_db_path,
+        symbols=symbols,
+        start_time_ms=start_time_ms,
+        end_time_ms=end_time_ms,
+        funding_required=config.funding_required,
+    )
     klines, funding = load_research_inputs(
         database_path=database_path,
         symbols=symbols,
@@ -665,7 +600,7 @@ def build_and_persist_research_dataset(
         end_time_ms=end_time_ms,
         funding_required=config.funding_required,
     )
-    frame, audit, feature_version, universe_version = build_point_in_time_frame(
+    frame, audit, _, universe_version = build_point_in_time_frame(
         klines=klines,
         funding=funding,
         symbols=symbols,
@@ -674,8 +609,11 @@ def build_and_persist_research_dataset(
     return persist_research_dataset(
         frame=frame,
         audit=audit,
-        feature_version=feature_version,
+        feature_set=phase3_feature_set(config),
         universe_version=universe_version,
+        input_files=input_files,
+        source_start_time_ms=start_time_ms,
+        source_end_time_ms=end_time_ms,
         storage=storage,
         compression=compression,
         symbols=symbols,

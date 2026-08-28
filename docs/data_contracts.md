@@ -127,17 +127,21 @@ O raw JSON canônico é imutável e nomeado pelo checksum. Ranges sobrepostos po
 a view DuckDB seleciona a observação mais recente por chave. Eventos simultâneos de tipos
 distintos são somados na contabilidade.
 
-## research_dataset — schema version 1
+## research_dataset — schema version 2
 
 Chave: `decision_time_ms + symbol`. O painel contém os três símbolos em todo timestamp aceito.
 Campos `feature_*` e features nomeadas usam somente fontes até a decisão. `execution_time_ms` é o
 próximo open e `label_end_time_ms` ocorre 60 minutos depois. `future_*` e `outcome_*` são labels ou
-resultados e nunca entram no score. `feature_version`, `universe_version` e `dataset_version`
-identificam contratos e conteúdo.
+resultados e nunca entram no score. O schema declara cada coluna como `KEY`, `FEATURE`, `TARGET`,
+`OUTCOME` ou `METADATA`; scoring aceita somente features ativas no registry com role `FEATURE`.
+`feature_version`, `universe_version` e `dataset_id` identificam contratos e lineage.
 
-O manifesto inclui definições das features, semântica do label, configuração completa e auditoria
-de duplicatas, nulos e desigualdades temporais. Consulte `docs/research_protocol.md` para o
-protocolo integral.
+O manifesto inclui definições versionadas, feature set e checksum canônico, label selecionado,
+roles, configuração e auditoria de duplicatas, nulos e desigualdades temporais. `lineage_v2`
+combina checksums/schemas dos arquivos de entrada, universo, range, feature set, label, parâmetros
+e versão do builder. `content_checksum` lógico e `parquet_checksum` físico são campos separados.
+Manifests v1 continuam legíveis via `DatasetReference` e são marcados `legacy_content_hash`.
+Consulte `docs/research_protocol.md` para o protocolo integral.
 
 ## Research component contracts — Fase 3.5 contract version 1
 

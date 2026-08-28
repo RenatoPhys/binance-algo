@@ -605,6 +605,7 @@ def research_build(
         start_ms, end_ms = _date_range_ms(start, end)
         result = build_and_persist_research_dataset(
             database_path=settings.duckdb_path,
+            state_db_path=settings.state_db_path,
             storage=LocalFilesystemStorage(settings.data_root),
             symbols=parsed_symbols,
             start_time_ms=start_ms,
