@@ -269,6 +269,27 @@ def test_sma_crossover_factory_is_causal_fixed_and_directional() -> None:
     assert first_strength.filter(pl.col("symbol") == "BTCUSDT")["score"].item() > 0
     assert first_strength.filter(pl.col("symbol") == "SOLUSDT")["score"].item() < 0
     assert float(first_strength["score"].std()) < 1
+
+    regime = np.repeat(np.linspace(0.1, 0.8, periods), len(symbols))
+    filtered_frame = frame.with_columns(pl.Series("market_volatility_regime", regime))
+    filtered_panel = PanelData.from_frame(
+        filtered_frame,
+        feature_columns=("log_return_1h", "market_volatility_regime"),
+    )
+    filtered_strategy = build_strategy(
+        "volatility_filtered_sma",
+        "v1",
+        {
+            "fast_window_hours": 4,
+            "slow_window_hours": 24,
+            "maximum_volatility_quantile": 0.5,
+        },
+    )
+    filtered = filtered_strategy.fit_panel(filtered_panel, target=None, context=context)
+    filtered_scores = filtered.score_panel(filtered_panel, context=context).frame
+    last = filtered_scores.filter(pl.col("decision_time_ms") == int(times[-1]))
+    assert last["score"].to_list() == [0.0, 0.0, 0.0]
+    assert filtered.volatility_threshold < 0.8
     with pytest.raises(ResearchError, match="shorter than"):
         build_strategy(
             "sma_crossover",

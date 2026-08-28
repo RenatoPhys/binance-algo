@@ -26,6 +26,10 @@ from binance_algo.research.strategies.sma_crossover import (
     SmaCrossoverStrategy,
 )
 from binance_algo.research.strategies.sma_trend_strength import SmaTrendStrengthStrategy
+from binance_algo.research.strategies.volatility_filtered_sma import (
+    VolatilityFilteredSmaParameters,
+    VolatilityFilteredSmaStrategy,
+)
 
 
 class ResidualMomentumSpec(BaseModel):
@@ -57,6 +61,10 @@ class SmaCrossoverSpec(BaseModel):
 
     fast_window_hours: int = Field(ge=2, le=72)
     slow_window_hours: int = Field(ge=4, le=720)
+
+
+class VolatilityFilteredSmaSpec(SmaCrossoverSpec):
+    maximum_volatility_quantile: float = Field(ge=0.25, le=0.90)
 
 
 StrategyFactory = Callable[[Mapping[str, Any]], Strategy]
@@ -108,6 +116,16 @@ def build_sma_trend_strength(parameters: Mapping[str, Any]) -> SmaTrendStrengthS
         raise ResearchError(f"invalid sma_trend_strength parameters: {exc}") from exc
 
 
+def build_volatility_filtered_sma(parameters: Mapping[str, Any]) -> VolatilityFilteredSmaStrategy:
+    try:
+        parsed = VolatilityFilteredSmaSpec.model_validate(dict(parameters))
+        return VolatilityFilteredSmaStrategy(
+            parameters=VolatilityFilteredSmaParameters(**parsed.model_dump())
+        )
+    except (TypeError, ValueError, ResearchError) as exc:
+        raise ResearchError(f"invalid volatility_filtered_sma parameters: {exc}") from exc
+
+
 STRATEGY_FACTORIES: dict[tuple[str, str], StrategyFactory] = {
     ("funding_carry", "1"): build_funding_carry,
     ("funding_carry", "v1"): build_funding_carry,
@@ -119,6 +137,8 @@ STRATEGY_FACTORIES: dict[tuple[str, str], StrategyFactory] = {
     ("sma_crossover", "v1"): build_sma_crossover,
     ("sma_trend_strength", "1"): build_sma_trend_strength,
     ("sma_trend_strength", "v1"): build_sma_trend_strength,
+    ("volatility_filtered_sma", "1"): build_volatility_filtered_sma,
+    ("volatility_filtered_sma", "v1"): build_volatility_filtered_sma,
 }
 
 
@@ -141,10 +161,12 @@ __all__ = [
     "ResidualMomentumSpec",
     "SmaCrossoverSpec",
     "StrategyFactory",
+    "VolatilityFilteredSmaSpec",
     "build_funding_carry",
     "build_residual_mean_reversion",
     "build_residual_momentum",
     "build_sma_crossover",
     "build_sma_trend_strength",
     "build_strategy",
+    "build_volatility_filtered_sma",
 ]
