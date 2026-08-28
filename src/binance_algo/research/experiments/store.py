@@ -6,7 +6,7 @@ import hashlib
 import math
 import sqlite3
 import time
-from collections.abc import Iterator, Mapping
+from collections.abc import Iterator, Mapping, Sequence
 from contextlib import closing, contextmanager
 from dataclasses import dataclass
 from pathlib import Path
@@ -95,6 +95,26 @@ class ResearchRegistryStatus:
     journal_mode: str
     foreign_keys: bool
     counts: Mapping[str, int]
+
+
+@dataclass(frozen=True, slots=True)
+class ResearchMetricRecord:
+    scope: MetricScope
+    metric_name: str
+    metric_value: float
+    fold: int | None = None
+    regime: str | None = None
+    metadata: Mapping[str, Any] | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class ResearchArtifactRecord:
+    artifact_type: str
+    path: str
+    checksum_sha256: str
+    row_count: int | None
+    size_bytes: int
+    schema_version: int
 
 
 class ResearchStore:
@@ -342,8 +362,17 @@ class ResearchStore:
                     raise ResearchStoreError(
                         f"registered feature set disappeared: {spec.feature_set_id}"
                     )
+                try:
+                    existing_payload = orjson.loads(str(row["spec_json"]))
+                except orjson.JSONDecodeError as exc:
+                    raise ResearchStoreError(
+                        f"stored feature set is not valid JSON: {spec.feature_set_id}"
+                    ) from exc
+                if isinstance(existing_payload, dict):
+                    existing_payload.pop("canonical_checksum", None)
+                    existing_payload.pop("declared_feature_order", None)
                 if (
-                    str(row["spec_json"]) != spec_json
+                    existing_payload != orjson.loads(spec_json)
                     or str(row["spec_sha256"]) != spec.canonical_checksum
                 ):
                     raise ResearchStoreError(
@@ -368,10 +397,7 @@ class ResearchStore:
                         """,
                         (spec.feature_set_id, feature_id),
                     ).fetchone()
-                    if member is None or (int(member[0]), str(member[1])) != (
-                        ordinal,
-                        parameters,
-                    ):
+                    if member is None or str(member[1]) != parameters:
                         raise ResearchStoreError(
                             f"immutable feature-set member conflict: {feature_id}"
                         )
@@ -557,6 +583,23 @@ class ResearchStore:
                     raise InvalidResearchTransition(
                         "experiment run cannot succeed without a result digest"
                     )
+                if status is RunStatus.SUCCEEDED:
+                    metric_count = int(
+                        connection.execute(
+                            "SELECT COUNT(*) FROM research_metrics WHERE run_id = ?",
+                            (run_id,),
+                        ).fetchone()[0]
+                    )
+                    artifact_count = int(
+                        connection.execute(
+                            "SELECT COUNT(*) FROM research_artifacts WHERE run_id = ?",
+                            (run_id,),
+                        ).fetchone()[0]
+                    )
+                    if metric_count == 0 or artifact_count == 0:
+                        raise InvalidResearchTransition(
+                            "experiment run cannot succeed before metrics and artifacts exist"
+                        )
                 if status is not RunStatus.SUCCEEDED and result_digest_value is not None:
                     raise InvalidResearchTransition(
                         "result digest is valid only for a succeeded experiment run"
@@ -765,6 +808,196 @@ class ResearchStore:
             raise ResearchStoreError(f"immutable artifact conflict: {artifact_id}")
         return artifact_id
 
+    def complete_run(
+        self,
+        run_id: str,
+        *,
+        result_digest_value: str,
+        metrics: Sequence[ResearchMetricRecord],
+        artifacts: Sequence[ResearchArtifactRecord],
+    ) -> ExperimentRunRecord:
+        """Register validated outputs and success atomically in one database transaction."""
+
+        if not result_digest_value or not metrics or not artifacts:
+            raise ResearchStoreError(
+                "run completion requires a result digest, metrics, and artifacts"
+            )
+        try:
+            with self.transaction() as connection:
+                row = connection.execute(
+                    "SELECT * FROM research_experiment_runs WHERE run_id = ?",
+                    (run_id,),
+                ).fetchone()
+                if row is None:
+                    raise ResearchStoreError(f"unknown experiment run: {run_id}")
+                current = RunStatus(str(row["status"]))
+                if current is not RunStatus.RUNNING:
+                    raise InvalidResearchTransition(
+                        f"only a running experiment can complete, not {current.value}"
+                    )
+                for metric in metrics:
+                    if not metric.metric_name or not math.isfinite(metric.metric_value):
+                        raise ResearchStoreError(
+                            "research metric name and value must be valid and finite"
+                        )
+                    connection.execute(
+                        """
+                        INSERT INTO research_metrics(
+                            run_id, scope, fold, regime, metric_name,
+                            metric_value, metadata_json
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                        """,
+                        (
+                            run_id,
+                            metric.scope.value,
+                            metric.fold,
+                            metric.regime,
+                            metric.metric_name,
+                            metric.metric_value,
+                            canonical_json_text(dict(metric.metadata or {})),
+                        ),
+                    )
+                for artifact in artifacts:
+                    payload = "\x1f".join(
+                        (
+                            run_id,
+                            artifact.artifact_type,
+                            artifact.path,
+                            artifact.checksum_sha256,
+                        )
+                    ).encode()
+                    connection.execute(
+                        """
+                        INSERT INTO research_artifacts(
+                            artifact_id, run_id, artifact_type, path, checksum_sha256,
+                            row_count, size_bytes, schema_version, created_at_ms
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        """,
+                        (
+                            hashlib.sha256(payload).hexdigest(),
+                            run_id,
+                            artifact.artifact_type,
+                            artifact.path,
+                            artifact.checksum_sha256,
+                            artifact.row_count,
+                            artifact.size_bytes,
+                            artifact.schema_version,
+                            now_ms(),
+                        ),
+                    )
+                timestamp = now_ms()
+                started = (
+                    int(row["started_at_ms"]) if row["started_at_ms"] is not None else timestamp
+                )
+                connection.execute(
+                    """
+                    UPDATE research_experiment_runs SET
+                        status = ?, finished_at_ms = ?, runtime_seconds = ?,
+                        result_digest = ?, error_type = NULL, error_message = NULL,
+                        traceback_path = NULL
+                    WHERE run_id = ?
+                    """,
+                    (
+                        RunStatus.SUCCEEDED.value,
+                        timestamp,
+                        (timestamp - started) / 1_000,
+                        result_digest_value,
+                        run_id,
+                    ),
+                )
+                updated = connection.execute(
+                    "SELECT * FROM research_experiment_runs WHERE run_id = ?",
+                    (run_id,),
+                ).fetchone()
+        except (ResearchStoreError, InvalidResearchTransition):
+            raise
+        except sqlite3.Error as exc:
+            raise ResearchStoreError(f"cannot complete experiment run {run_id}: {exc}") from exc
+        assert updated is not None
+        return self._run_from_row(updated)
+
+    def list_runs(
+        self, *, experiment_id_value: str | None = None
+    ) -> tuple[ExperimentRunRecord, ...]:
+        query = "SELECT * FROM research_experiment_runs"
+        parameters: tuple[str, ...] = ()
+        if experiment_id_value is not None:
+            query += " WHERE experiment_id = ?"
+            parameters = (experiment_id_value,)
+        query += " ORDER BY created_at_ms, attempt"
+        try:
+            with closing(self._connect()) as connection:
+                rows = connection.execute(query, parameters).fetchall()
+        except sqlite3.Error as exc:
+            raise ResearchStoreError(f"cannot list experiment runs: {exc}") from exc
+        return tuple(self._run_from_row(row) for row in rows)
+
+    def latest_successful_run(self, identifier: str) -> ExperimentRunRecord | None:
+        try:
+            with closing(self._connect()) as connection:
+                row = connection.execute(
+                    """
+                    SELECT * FROM research_experiment_runs
+                    WHERE experiment_id = ? AND status = 'SUCCEEDED'
+                    ORDER BY attempt DESC LIMIT 1
+                    """,
+                    (identifier,),
+                ).fetchone()
+        except sqlite3.Error as exc:
+            raise ResearchStoreError(f"cannot read successful run for {identifier}: {exc}") from exc
+        return self._run_from_row(row) if row is not None else None
+
+    def list_artifacts(self, run_id: str) -> tuple[ResearchArtifactRecord, ...]:
+        try:
+            with closing(self._connect()) as connection:
+                rows = connection.execute(
+                    """
+                    SELECT artifact_type, path, checksum_sha256, row_count,
+                           size_bytes, schema_version
+                    FROM research_artifacts WHERE run_id = ?
+                    ORDER BY artifact_type, path
+                    """,
+                    (run_id,),
+                ).fetchall()
+        except sqlite3.Error as exc:
+            raise ResearchStoreError(f"cannot list artifacts for {run_id}: {exc}") from exc
+        return tuple(
+            ResearchArtifactRecord(
+                artifact_type=str(row["artifact_type"]),
+                path=str(row["path"]),
+                checksum_sha256=str(row["checksum_sha256"]),
+                row_count=int(row["row_count"]) if row["row_count"] is not None else None,
+                size_bytes=int(row["size_bytes"]),
+                schema_version=int(row["schema_version"]),
+            )
+            for row in rows
+        )
+
+    def list_metrics(self, run_id: str) -> tuple[ResearchMetricRecord, ...]:
+        try:
+            with closing(self._connect()) as connection:
+                rows = connection.execute(
+                    """
+                    SELECT scope, fold, regime, metric_name, metric_value, metadata_json
+                    FROM research_metrics WHERE run_id = ?
+                    ORDER BY scope, fold, regime, metric_name
+                    """,
+                    (run_id,),
+                ).fetchall()
+        except sqlite3.Error as exc:
+            raise ResearchStoreError(f"cannot list metrics for {run_id}: {exc}") from exc
+        return tuple(
+            ResearchMetricRecord(
+                scope=MetricScope(str(row["scope"])),
+                fold=int(row["fold"]) if row["fold"] is not None else None,
+                regime=str(row["regime"]) if row["regime"] is not None else None,
+                metric_name=str(row["metric_name"]),
+                metric_value=float(row["metric_value"]),
+                metadata=orjson.loads(str(row["metadata_json"])),
+            )
+            for row in rows
+        )
+
     def _connect(self) -> sqlite3.Connection:
         connection = sqlite3.connect(
             self.path,
@@ -856,6 +1089,8 @@ __all__ = [
     "HYPOTHESIS_TRANSITIONS",
     "RUN_TRANSITIONS",
     "ExperimentRunRecord",
+    "ResearchArtifactRecord",
+    "ResearchMetricRecord",
     "ResearchRegistryStatus",
     "ResearchStore",
 ]

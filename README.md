@@ -8,8 +8,9 @@ dataset causal e um baseline vetorizado walk-forward. A Fase 3.5 agora evolui es
 uma plataforma reproduzível de pesquisa: o golden baseline está preservado e estratégia,
 portfólio e engine usam contratos separados; feature/label registries, dataset views com roles e
 fingerprint de lineage v2 já estão ativos. O `ResearchStore` persiste hipóteses, componentes,
-experimentos imutáveis, tentativas, métricas e artefatos por identidade canônica. Não há
-autenticação, simulador de execução, Demo Trading ou envio de ordens.
+experimentos imutáveis, tentativas, métricas e artefatos por identidade canônica. O artifact
+pipeline e o experiment runner já promovem bundles atômicos e verificáveis. Não há autenticação,
+simulador de execução, Demo Trading ou envio de ordens.
 
 ## Segurança por padrão
 
@@ -68,6 +69,9 @@ uv run binance-algo --config configs/research.yaml funding sync \
 uv run binance-algo --config configs/research.yaml research build \
   --symbols BTCUSDT,ETHUSDT,SOLUSDT --start 2026-05-28 --end 2026-08-25
 uv run binance-algo --config configs/research.yaml research backtest
+uv run binance-algo --config configs/research.yaml research experiment list
+uv run binance-algo --config configs/research.yaml research experiment verify <experiment_id>
+uv run binance-algo --config configs/research.yaml research experiment rerun <experiment_id>
 ```
 
 Durante o recorder, consulte `http://127.0.0.1:9108/health/live`, `/health/ready` e `/metrics`.
@@ -112,6 +116,9 @@ var/data/raw/binance/usdm/funding_rates/symbol=<symbol>/*.json
 var/data/bronze/binance/usdm/funding_rates/symbol=<symbol>/*.parquet
 var/data/gold/binance/usdm/research_dataset/version=<hash>/*
 var/data/gold/binance/usdm/research_backtest/version=<hash>/*
+var/data/gold/binance/usdm/research_experiments/experiment_id=<hash>/run_id=<hash>/*
+var/data/tmp/research/<run_id>/*
+var/data/quarantine/research/<run_id>-*/*
 var/data/quarantine/recorder_recovery/<timestamp>/*
 var/state/ingestion.sqlite3
 var/state/research.sqlite3

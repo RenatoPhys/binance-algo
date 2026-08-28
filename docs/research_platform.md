@@ -2,14 +2,14 @@
 
 ## Estado do incremento
 
-Os PRs 1 a 4 estão implementados. O golden baseline permanece como referência e o motor agora
+Os PRs 1 a 5 estão implementados. O golden baseline permanece como referência e o motor agora
 recebe `Strategy` e `PortfolioPolicy`, usando treino e teste reais em cada fold. Residual momentum
 e neutral long/short são as primeiras implementações dos contratos. Feature/label registries,
 roles de schema, dataset views e fingerprint `lineage_v2` estão ativos. A CLI legada usa essa
 rota por meio de um adaptador explícito; não existe segundo motor. `ResearchStore`, experiment
-registry e code fingerprint estão ativos. Campaign runner, artifact pipeline, ledger,
-multiple-testing adjustment e promotion gates ainda não estão implementados e não devem ser
-simulados por scripts ad hoc.
+registry, code fingerprint, artifact pipeline e experiment runner estão ativos. Campaign runner,
+ledger, multiple-testing adjustment e promotion gates ainda não estão implementados e não devem
+ser simulados por scripts ad hoc.
 
 ## Fronteiras arquiteturais
 
@@ -93,9 +93,8 @@ Markdown e SVG permaneceram idênticos. No PR 3, o dataset schema v2 preservou t
 schema v1 exceto os campos de versão, e a curva OOS real permaneceu exatamente igual. A
 `run_version` mudou porque a identidade legada do backtest ainda inclui o novo path do dataset.
 A identidade canônica criada no PR 4 remove essa dependência usando o payload portátil do
-`DatasetReference`; o CLI legado só passará a usá-la quando for conectado ao runner no PR 5.
-A CLI `research backtest` importa o adaptador `run_and_persist_phase3_baseline`, que constrói
-componentes explícitos e chama o engine genérico.
+`DatasetReference`. O PR 5 conectou a CLI `research backtest` ao `ExperimentRunner`; ela registra
+o baseline de compatibilidade e chama o mesmo engine genérico usado pelos experimentos.
 
 ## Identidade e ResearchStore
 
@@ -109,17 +108,46 @@ dela: após sucesso, eles formam um `result_digest` separado.
 tabelas de domínio e seus índices, com WAL, foreign keys, `busy_timeout` e rollback atômico. Um
 experimento é imutável; rerun aloca uma nova tentativa. Runs seguem
 `PENDING -> QUEUED -> RUNNING -> SUCCEEDED|FAILED|STALE`, com cancelamento antes da execução e
-retomada explícita de `STALE`. Sucesso exige `result_digest`.
+retomada explícita de `STALE`. Sucesso exige métricas, artifacts e `result_digest` inseridos na
+mesma transação final.
 
 O registry pode ser inicializado ou migrado repetidamente. Features embutidas, feature sets e
 hipóteses são idempotentes quando o conteúdo imutável coincide e falham diante de conflito.
 
+## Artifact pipeline e execução
+
+`ExperimentRunner` resolve somente strategy/policy registradas, reconstrói custos e splits a
+partir do spec e localiza o dataset pelo conteúdo. O motor continua único. Cada tentativa escreve
+em `tmp/research/<run_id>`, valida o bundle e promove o diretório inteiro para:
+
+```text
+gold/binance/usdm/research_experiments/
+  experiment_id=<prefixo-24>/run_id=<prefixo-24>/
+    manifest.json
+    experiment_spec.json
+    metrics.json
+    report.md
+    oos_curve.parquet
+    fold_metrics.parquet
+    regime_metrics.parquet
+    monthly_metrics.parquet
+    symbol_metrics.parquet
+    positions.parquet  # full
+    scores.parquet     # full
+    pnl.svg            # opt-in
+```
+
+O registry retém os IDs completos. `summary` não materializa scores/positions; `full` usa schemas
+long-form. Falhas antes da conclusão vão para quarantine e ficam `FAILED`. `experiment verify`
+recalcula checksums, sizes, row counts e `result_digest`; `experiment rerun` cria novo attempt e
+exige digest idêntico ao sucesso anterior. O SVG opt-in e o manifest operacional são verificados,
+mas não alteram o digest científico.
+
 ## Próximos incrementos
 
-1. criar pipeline atômico de artifacts e experiment runner;
-2. criar campaign planner/runner com resume e cache;
-3. adicionar ledger, ablações, robustez, multiple testing e promotion gates;
-4. otimizar o painel e concluir documentação/aceite.
+1. criar campaign planner/runner com resume e cache;
+2. adicionar ledger, ablações, robustez, multiple testing e promotion gates;
+3. otimizar o painel e concluir documentação/aceite.
 
 Nenhuma campanha extensa deve ser executada antes de existirem separação, registry, artifacts e
 runner (PRs 1 a 6).

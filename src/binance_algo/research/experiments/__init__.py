@@ -8,11 +8,13 @@ from binance_algo.research.experiments.models import (
     HypothesisSpec,
     RunStatus,
 )
+from binance_algo.research.experiments.runner import ExperimentRunner
 from binance_algo.research.experiments.store import ResearchStore
 
 __all__ = [
     "ArtifactPolicy",
     "CodeFingerprint",
+    "ExperimentRunner",
     "ExperimentSpec",
     "HypothesisSpec",
     "ResearchStore",

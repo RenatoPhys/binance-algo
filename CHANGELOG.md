@@ -18,6 +18,10 @@
   result digest separado.
 - Registro idempotente de hipóteses, features, feature sets, experimentos, métricas e artefatos,
   com CLI de inicialização, status e inspeção.
+- Artifact bundles atômicos com temp/promote/quarantine, policies `summary`/`full`, checksums e
+  scores/positions long-form em Parquet.
+- Experiment runner offline com factories explícitas, conclusão transacional, verify/rerun e
+  confirmação determinística de `result_digest`; gráficos continuam opt-in.
 
 ## 0.5.0 — 2026-08-28
 

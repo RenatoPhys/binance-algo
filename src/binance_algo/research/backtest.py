@@ -72,6 +72,15 @@ class BacktestRun:
     curve: pl.DataFrame
     folds: tuple[WalkForwardFold, ...]
     metrics: PerformanceMetrics
+    scores: pl.DataFrame
+    positions: pl.DataFrame
+
+
+@dataclass(frozen=True, slots=True)
+class _FoldBacktestRun:
+    curve: pl.DataFrame
+    scores: pl.DataFrame
+    positions: pl.DataFrame
 
 
 @dataclass(frozen=True, slots=True)
@@ -83,6 +92,14 @@ class ResearchBacktestResult:
     report_chart_path: str | None
     metrics: PerformanceMetrics
     fold_count: int
+    stress: dict[str, dict[str, float | int]]
+    bootstrap: dict[str, float | int]
+    regimes: dict[str, dict[str, float | int]]
+
+
+@dataclass(frozen=True, slots=True)
+class BacktestValidationResult:
+    run: BacktestRun
     stress: dict[str, dict[str, float | int]]
     bootstrap: dict[str, float | int]
     regimes: dict[str, dict[str, float | int]]
@@ -216,7 +233,7 @@ def _run_fold(
     config: ResearchConfig,
     cost_multiplier: float,
     signal_delay_bars: int,
-) -> pl.DataFrame:
+) -> _FoldBacktestRun:
     train_features = build_feature_view(
         train,
         required_features=strategy.required_features(),
@@ -275,6 +292,8 @@ def _run_fold(
     previous = np.zeros(len(symbols), dtype=np.float64)
     equity = 1.0
     output: list[dict[str, object]] = []
+    score_output: list[dict[str, object]] = []
+    position_output: list[dict[str, object]] = []
     fee_rate = float(config.fee_schedule.taker_fee_rate) * cost_multiplier
     half_spread_rate = float(config.spread_bps) / 20_000 * cost_multiplier
     slippage_rate = float(config.slippage_bps) / 10_000 * cost_multiplier
@@ -284,10 +303,16 @@ def _run_fold(
         if not _fee_schedule_covers(config, execution_time):
             raise ResearchError(f"fee schedule does not cover execution time {execution_time}")
         weights = targets[period]
-        trades = np.abs(weights - previous)
-        turnover = float(np.sum(trades))
+        rebalances = weights - previous
+        trades = np.abs(rebalances)
         if period == len(times) - 1:
-            turnover += float(np.sum(np.abs(weights)))
+            trades = trades + np.abs(weights)
+        turnover = float(np.sum(trades))
+        price_contributions = weights * arrays["future_return_1h"][period]
+        funding_contributions = -weights * arrays["outcome_funding_rate_1h"][period]
+        allocated_fees = trades * fee_rate
+        allocated_spread = trades * half_spread_rate
+        allocated_slippage = trades * slippage_rate
         price_pnl = float(np.dot(weights, arrays["future_return_1h"][period]))
         funding_pnl = float(-np.dot(weights, arrays["outcome_funding_rate_1h"][period]))
         trading_fees = turnover * fee_rate
@@ -301,7 +326,7 @@ def _run_fold(
             raise ResearchError("research equity became non-positive")
         equity *= 1 + net_return
         participation = np.divide(
-            capital * trades,
+            capital * np.abs(rebalances),
             arrays["outcome_quote_volume_1h"][period],
             out=np.zeros(len(symbols), dtype=np.float64),
             where=arrays["outcome_quote_volume_1h"][period] > 0,
@@ -309,6 +334,47 @@ def _run_fold(
         score_ranks = _rank(scores[period])
         outcome_ranks = _rank(arrays["future_residual_return_1h"][period])
         rank_ic = float(np.corrcoef(score_ranks, outcome_ranks)[0, 1])
+        for symbol_index, symbol in enumerate(symbols):
+            gross_contribution = float(
+                price_contributions[symbol_index] + funding_contributions[symbol_index]
+            )
+            explicit_cost = float(
+                allocated_fees[symbol_index]
+                + allocated_spread[symbol_index]
+                + allocated_slippage[symbol_index]
+            )
+            score_output.append(
+                {
+                    "fold": context.fold,
+                    "decision_time_ms": int(decision_time),
+                    "symbol": symbol,
+                    "score": float(scores[period, symbol_index]),
+                    "score_rank": float(score_ranks[symbol_index]),
+                }
+            )
+            position_output.append(
+                {
+                    "fold": context.fold,
+                    "decision_time_ms": int(decision_time),
+                    "execution_time_ms": execution_time,
+                    "symbol": symbol,
+                    "previous_weight": float(previous[symbol_index]),
+                    "target_weight": float(weights[symbol_index]),
+                    "trade_weight": float(trades[symbol_index]),
+                    "gross_contribution": gross_contribution,
+                    "net_contribution": gross_contribution - explicit_cost,
+                    "beta_contribution": float(
+                        weights[symbol_index] * arrays["rolling_beta"][period, symbol_index]
+                    ),
+                    "future_return": float(arrays["future_return_1h"][period, symbol_index]),
+                    "funding_rate": float(arrays["outcome_funding_rate_1h"][period, symbol_index]),
+                    "price_pnl": float(price_contributions[symbol_index]),
+                    "funding_pnl": float(funding_contributions[symbol_index]),
+                    "allocated_fee": float(allocated_fees[symbol_index]),
+                    "allocated_spread_cost": float(allocated_spread[symbol_index]),
+                    "allocated_slippage_cost": float(allocated_slippage[symbol_index]),
+                }
+            )
         output.append(
             {
                 "fold": context.fold,
@@ -341,7 +407,11 @@ def _run_fold(
             }
         )
         previous = weights
-    return pl.DataFrame(output)
+    return _FoldBacktestRun(
+        curve=pl.DataFrame(output),
+        scores=pl.DataFrame(score_output),
+        positions=pl.DataFrame(position_output),
+    )
 
 
 def calculate_metrics(curve: pl.DataFrame) -> PerformanceMetrics:
@@ -410,7 +480,7 @@ def run_walk_forward(
         test_days=config.walk_forward_test_days,
         embargo_bars=config.embargo_bars,
     )
-    curves: list[pl.DataFrame] = []
+    fold_runs: list[_FoldBacktestRun] = []
     for fold in folds:
         train = frame.filter(
             pl.col("decision_time_ms").is_between(
@@ -422,7 +492,7 @@ def run_walk_forward(
                 fold.test_start_ms, fold.test_end_ms, closed="both"
             )
         )
-        curves.append(
+        fold_runs.append(
             _run_fold(
                 train,
                 test,
@@ -442,9 +512,17 @@ def run_walk_forward(
                 signal_delay_bars=signal_delay_bars,
             )
         )
-    curve = pl.concat(curves).sort("decision_time_ms")
+    curve = pl.concat([run.curve for run in fold_runs]).sort("decision_time_ms")
     curve = curve.with_columns((pl.col("net_return") + 1).cum_prod().alias("oos_equity"))
-    return BacktestRun(curve=curve, folds=folds, metrics=calculate_metrics(curve))
+    scores = pl.concat([run.scores for run in fold_runs]).sort("decision_time_ms", "symbol")
+    positions = pl.concat([run.positions for run in fold_runs]).sort("decision_time_ms", "symbol")
+    return BacktestRun(
+        curve=curve,
+        folds=folds,
+        metrics=calculate_metrics(curve),
+        scores=scores,
+        positions=positions,
+    )
 
 
 def _block_bootstrap(
@@ -507,19 +585,16 @@ def _metric_summary(metrics: PerformanceMetrics) -> dict[str, float | int]:
     }
 
 
-def run_and_persist_backtest(
+def run_research_validation(
+    frame: pl.DataFrame,
     *,
-    dataset_path: Path,
-    storage: LocalFilesystemStorage,
-    reports_root: Path,
-    compression: str,
     config: ResearchConfig,
     strategy: Strategy,
     portfolio_policy: PortfolioPolicy,
-    strategy_stress: Mapping[str, Strategy],
-    generate_chart: bool = False,
-) -> ResearchBacktestResult:
-    frame = pl.read_parquet(dataset_path)
+    strategy_stress: Mapping[str, Strategy] | None = None,
+) -> BacktestValidationResult:
+    """Run the baseline and deterministic validation scenarios without persistence."""
+
     baseline = run_walk_forward(
         frame,
         config=config,
@@ -553,11 +628,11 @@ def run_and_persist_backtest(
         "cost_2_0x": _metric_summary(cost_20.metrics),
         "signal_delay_1_bar": _metric_summary(delay.metrics),
     }
-    reserved_stress_names = set(stress)
-    collisions = sorted(reserved_stress_names.intersection(strategy_stress))
+    configured_strategy_stress = strategy_stress or {}
+    collisions = sorted(set(stress).intersection(configured_strategy_stress))
     if collisions:
         raise ResearchError(f"strategy stress names collide with engine stresses: {collisions}")
-    for name, stress_strategy in strategy_stress.items():
+    for name, stress_strategy in configured_strategy_stress.items():
         stress[name] = _metric_summary(
             run_walk_forward(
                 frame,
@@ -572,7 +647,38 @@ def run_and_persist_backtest(
         block_hours=config.block_bootstrap_hours,
         seed=config.random_seed,
     )
-    regimes = _regime_metrics(baseline.curve)
+    return BacktestValidationResult(
+        run=baseline,
+        stress=stress,
+        bootstrap=bootstrap,
+        regimes=_regime_metrics(baseline.curve),
+    )
+
+
+def run_and_persist_backtest(
+    *,
+    dataset_path: Path,
+    storage: LocalFilesystemStorage,
+    reports_root: Path,
+    compression: str,
+    config: ResearchConfig,
+    strategy: Strategy,
+    portfolio_policy: PortfolioPolicy,
+    strategy_stress: Mapping[str, Strategy],
+    generate_chart: bool = False,
+) -> ResearchBacktestResult:
+    frame = pl.read_parquet(dataset_path)
+    validation = run_research_validation(
+        frame,
+        config=config,
+        strategy=strategy,
+        portfolio_policy=portfolio_policy,
+        strategy_stress=strategy_stress,
+    )
+    baseline = validation.run
+    stress = validation.stress
+    bootstrap = validation.bootstrap
+    regimes = validation.regimes
     run_payload = {
         "dataset_path": str(dataset_path.resolve()),
         "research_config": config.model_dump(mode="json"),
