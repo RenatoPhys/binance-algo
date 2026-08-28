@@ -218,6 +218,7 @@ def test_sma_crossover_factory_is_causal_fixed_and_directional() -> None:
     periods = 80
     symbols = ("BTCUSDT", "ETHUSDT", "SOLUSDT")
     times = start_ms + np.arange(periods, dtype=np.int64) * hour_ms
+    times[60:] += hour_ms
     hourly_returns = np.tile(np.asarray([0.005, 0.0, -0.005]), (periods, 1))
     frame = pl.DataFrame(
         {

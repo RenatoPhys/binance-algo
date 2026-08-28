@@ -1,9 +1,10 @@
 campaign:
-  name: sma_crossover_v1_historical_discovery
+  name: sma_crossover_v1_historical_discovery_v2
   description: >-
     Historical discovery grid for causal hourly simple-moving-average crossovers on the complete
-    three-symbol panel available since September 2020. This preserves exploratory evidence only
-    and cannot promote an experiment.
+    three-symbol panel available since September 2020. Sparse feature-calendar gaps keep the last
+    fully observed SMA signal until both windows are complete again. This preserves exploratory
+    evidence only and cannot promote an experiment.
   hypothesis_id: HYP-SMA-CROSS-0001
   artifact_policy: summary
   max_trials: 9

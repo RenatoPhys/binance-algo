@@ -26,6 +26,19 @@ SMA_CROSSOVER_FEATURES = ("log_return_1h",)
 HOUR_MS = 3_600_000
 
 
+def _moving_average(
+    cumulative_prices: np.ndarray[Any, np.dtype[np.float64]],
+    offsets: np.ndarray[Any, np.dtype[np.int64]],
+    window: int,
+) -> np.ndarray[Any, np.dtype[np.float64]]:
+    right = offsets + 1
+    left = right - window
+    return np.asarray(
+        (cumulative_prices[right] - cumulative_prices[left]) / window,
+        dtype=np.float64,
+    )
+
+
 @dataclass(frozen=True, slots=True)
 class SmaCrossoverParameters:
     fast_window_hours: int
@@ -47,47 +60,46 @@ def _score_panel(
     context: FoldContext,
 ) -> StrategyScores:
     test_slice = panel.time_slice(context.test_start_ms, context.test_end_ms)
-    test_left = 0 if test_slice.start is None else test_slice.start
-    test_right = len(panel.times) if test_slice.stop is None else test_slice.stop
-    history_left = test_left - parameters.slow_window_hours + 1
-    if history_left < 0:
-        raise ResearchError(
-            "SMA crossover scoring lacks the causal history required by its slow window"
-        )
-    history_times = panel.times[history_left:test_right]
-    if np.any(np.diff(history_times) != HOUR_MS):
-        raise ResearchError("SMA crossover requires a contiguous hourly decision panel")
     panel.require_complete_range(
-        int(history_times[0]),
+        context.test_start_ms,
         context.test_end_ms,
         role="SMA crossover scoring",
     )
     hourly_returns = np.asarray(
-        panel.matrix("log_return_1h")[history_left:test_right],
+        panel.matrix("log_return_1h"),
         dtype=np.float64,
     )
-    relative_log_prices = np.cumsum(hourly_returns, axis=0)
-    relative_prices = np.exp(relative_log_prices - relative_log_prices[0])
-    cumulative_prices = np.vstack(
-        (
-            np.zeros((1, len(panel.symbols)), dtype=np.float64),
-            np.cumsum(relative_prices, axis=0),
+    crossover = np.full_like(hourly_returns, np.nan)
+    breaks = np.flatnonzero(np.diff(panel.times) != HOUR_MS) + 1
+    starts = np.concatenate((np.asarray([0]), breaks))
+    ends = np.concatenate((breaks, np.asarray([len(panel.times)])))
+    for start, end in zip(starts, ends, strict=True):
+        segment = hourly_returns[start:end]
+        if len(segment) < parameters.slow_window_hours:
+            continue
+        relative_log_prices = np.cumsum(segment, axis=0)
+        relative_prices = np.exp(relative_log_prices - relative_log_prices[0])
+        cumulative_prices = np.vstack(
+            (
+                np.zeros((1, len(panel.symbols)), dtype=np.float64),
+                np.cumsum(relative_prices, axis=0),
+            )
         )
-    )
-    test_offsets = np.arange(test_left - history_left, test_right - history_left)
-
-    def moving_average(window: int) -> np.ndarray[Any, np.dtype[np.float64]]:
-        right = test_offsets + 1
-        left = right - window
-        return np.asarray(
-            (cumulative_prices[right] - cumulative_prices[left]) / window,
-            dtype=np.float64,
+        offsets = np.arange(parameters.slow_window_hours - 1, len(segment))
+        fast = _moving_average(cumulative_prices, offsets, parameters.fast_window_hours)
+        slow = _moving_average(cumulative_prices, offsets, parameters.slow_window_hours)
+        crossover[start + offsets] = np.log(fast / slow)
+    last_valid = np.full(len(panel.symbols), np.nan, dtype=np.float64)
+    for row in range(len(crossover)):
+        valid = np.isfinite(crossover[row])
+        last_valid[valid] = crossover[row, valid]
+        crossover[row, ~valid] = last_valid[~valid]
+    test_crossover = crossover[test_slice]
+    if np.any(~np.isfinite(test_crossover)):
+        raise ResearchError(
+            "SMA crossover scoring lacks the causal history required by its slow window"
         )
-
-    fast = moving_average(parameters.fast_window_hours)
-    slow = moving_average(parameters.slow_window_hours)
-    crossover = np.log(fast / slow)
-    scores = cross_sectional_zscore(crossover)
+    scores = cross_sectional_zscore(test_crossover)
     return StrategyScores(
         matrix_to_long_frame(
             times=panel.times[test_slice],
