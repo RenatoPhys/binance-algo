@@ -1,5 +1,5 @@
 campaign:
-  name: linear_cross_sectional_v1_development
+  name: linear_cross_sectional_v1_development_v2
   description: >-
     Development-only screen of a training-only cross-sectional ridge model ending before the
     final two-year OOS.
