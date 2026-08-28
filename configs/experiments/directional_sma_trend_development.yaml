@@ -1,5 +1,5 @@
 campaign:
-  name: directional_sma_trend_v1_development
+  name: directional_sma_trend_v1_development_v2
   description: >-
     Development-only screen of absolute SMA trend positions ending before the final two-year OOS.
   hypothesis_id: HYP-DIRECTIONAL-SMA-TREND-0001

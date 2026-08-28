@@ -1,12 +1,15 @@
 from __future__ import annotations
 
 import math
+from pathlib import Path
 
 import numpy as np
 import polars as pl
 import pytest
 
 from binance_algo.common.errors import ResearchError
+from binance_algo.config import load_settings
+from binance_algo.research.backtest import run_walk_forward
 from binance_algo.research.contracts import FoldContext, StrategyScores
 from binance_algo.research.panel import PanelData
 from binance_algo.research.portfolio.directional import (
@@ -14,8 +17,12 @@ from binance_algo.research.portfolio.directional import (
     BufferedDirectionalPolicy,
 )
 from binance_algo.research.portfolio.registry import build_portfolio_policy
+from binance_algo.research.strategies.registry import build_strategy
+
+from ..research_fixtures import research_frame
 
 HOUR_MS = 3_600_000
+BASE_CONFIG = Path(__file__).parents[2] / "configs" / "base.yaml"
 
 
 def _context() -> FoldContext:
@@ -122,3 +129,35 @@ def test_directional_factory_is_strict_and_parameters_are_finite() -> None:
             annual_volatility_target=0.15,
             max_symbol_weight=0.25,
         )
+
+
+def test_directional_walk_forward_loads_accounting_beta_independently() -> None:
+    config = load_settings(BASE_CONFIG).research.model_copy(
+        update={"walk_forward_train_days": 7, "walk_forward_test_days": 1}
+    )
+    strategy = build_strategy(
+        "sma_trend_strength",
+        "1",
+        {"fast_window_hours": 4, "slow_window_hours": 24},
+    )
+    policy = build_portfolio_policy(
+        "buffered_directional",
+        "1",
+        {
+            "signal_threshold": 0.0,
+            "rebalance_interval_hours": 24,
+            "gross_exposure": 0.5,
+            "annual_volatility_target": 0.15,
+            "max_symbol_weight": 0.25,
+        },
+    )
+
+    result = run_walk_forward(
+        research_frame(),
+        config=config,
+        strategy=strategy,
+        portfolio_policy=policy,
+    )
+
+    assert result.metrics.periods > 0
+    assert math.isfinite(result.metrics.maximum_absolute_beta_exposure)
