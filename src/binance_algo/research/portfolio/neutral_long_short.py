@@ -14,8 +14,8 @@ from binance_algo.research.contracts import (
     FEATURE_KEY_COLUMNS,
     FoldContext,
     StrategyScores,
-    select_feature_view,
 )
+from binance_algo.research.datasets.views import build_feature_view
 
 NEUTRAL_LONG_SHORT_FEATURES = ("rolling_beta", "realized_volatility_24h")
 
@@ -95,7 +95,7 @@ def _aligned_panel(
     score_frame = (
         StrategyScores(scores).frame.select(*FEATURE_KEY_COLUMNS, "score").sort(FEATURE_KEY_COLUMNS)
     )
-    market_frame = select_feature_view(
+    market_frame = build_feature_view(
         market_state,
         required_features=NEUTRAL_LONG_SHORT_FEATURES,
     ).sort(FEATURE_KEY_COLUMNS)

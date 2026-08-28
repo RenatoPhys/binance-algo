@@ -53,10 +53,15 @@ baseline auditável; seu resultado negativo não foi promovido a alpha. A Fase 4
 - [x] Engine recebe `Strategy` + `PortfolioPolicy` e executa treino/teste por fold
 - [x] CLI `research backtest` usa o adaptador do engine genérico, sem rota paralela
 - [x] Regressão sintética e real byte a byte equivalente ao baseline da Fase 3
+- [x] Fase 3.5 PR 3: feature/label registries e feature sets canônicos
+- [x] Dataset views com roles `KEY`/`FEATURE`/`TARGET`/`OUTCOME`/`METADATA`
+- [x] Features atuais extraídas em módulos sem alteração dos valores financeiros
+- [x] `DatasetReference` compatível com manifests v1 e sem paths na identidade
+- [x] Fingerprint `lineage_v2` por inputs manifestados, schema, universo, features, label e builder
+- [x] Checksums lógico do conteúdo e físico do Parquet persistidos separadamente
 
 ## Pending
 
-- [ ] PR 3: dataset views, feature/label registry e fingerprint de lineage v2
 - [ ] PR 4: ResearchStore, migrations, experiment identity e code fingerprint
 - [ ] PR 5: artifact pipeline atômico e experiment runner
 - [ ] PR 6: campaign planner/runner determinístico com resume/cache
@@ -91,6 +96,8 @@ baseline auditável; seu resultado negativo não foi promovido a alpha. A Fase 4
 - `ruff check .`: passed
 - `mypy src`: passed; 46 source files
 - `pytest -m "not network"`: 78 passed, 2 deselected
+- gates PR 3: `ruff format --check` em 105 arquivos, `ruff check`, mypy estrito em 62 módulos e
+  `pytest -m "not network"` com 87 passed/2 deselected
 - testes `network`: não reexecutados neste incremento offline; referência anterior de 2 passed
 - `binance-algo doctor`: todos os checks passaram; SQLite `journal_mode=wal`
 - golden sintético: `tests/golden/research_phase3_synthetic.json`, SHA-256
@@ -138,6 +145,17 @@ baseline auditável; seu resultado negativo não foi promovido a alpha. A Fase 4
     `c8a7a110b3b973dc13ebf76495e37f51baff5908efbfa5079a97c30d31a06a8d`
 - regressão PR 2: CLI retornou novamente `974ab2c8643ace95`; os quatro SHA-256 acima permaneceram
   idênticos após a extração de strategy/policy e a ativação de `fit` no treino
+- dataset schema v2: `dataset_id`
+  `0a0d252ea0690ca59be2dd037dcb1087da3af33cecdb7588709705bc5579ee61`, versão curta
+  `0a0d252ea0690ca5`, método `lineage_v2`, 273 inputs manifestados, 5.832 linhas e 1.944 decisões
+- checksum lógico do dataset v2:
+  `d509760e21b73b4bc2d7f74053d0d1cd4927068d232f686b43b45fdd6b160af2`; checksum físico do
+  Parquet: `d444a60920f621bf3a0804551cc08a83b6f074d88291a0d67d85e9c7daabb8b0`
+- regressão PR 3: todas as colunas/valores do dataset v1 e v2 são idênticos, exceto
+  `feature_version` e `dataset_schema_version`; a curva OOS v2 (1.008 × 22) é exatamente igual à
+  curva `974ab2c8643ace95` e mantém retorno -14,6882%, Sharpe -25,050 e erro contábil zero
+- o run do backtest v2 é `bb685672ab78d8b5`; a mudança de run ID decorre da identidade legada que
+  ainda inclui o path do dataset e será removida pelo PR 4
 - baseline OOS: retorno de preço somado +1,527%, funding -0,046%, custos explícitos 17,348%,
   retorno composto líquido -14,688%, max drawdown -14,711% e turnover 266,888
 - estabilidade: custos 1,5×/2× produziram -21,781%/-28,285%; atraso de uma barra -12,760%;

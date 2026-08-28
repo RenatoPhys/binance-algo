@@ -14,8 +14,8 @@ from binance_algo.research.contracts import (
     FoldContext,
     StrategyScores,
     TrainingDataset,
-    select_feature_view,
 )
+from binance_algo.research.datasets.views import build_feature_view
 
 RESIDUAL_MOMENTUM_FEATURES = (
     "residual_momentum_1h",
@@ -107,7 +107,7 @@ class FittedResidualMomentumStrategy:
     parameters: ResidualMomentumParameters
 
     def score(self, features: pl.DataFrame, *, context: FoldContext) -> StrategyScores:
-        projected = select_feature_view(
+        projected = build_feature_view(
             features,
             required_features=RESIDUAL_MOMENTUM_FEATURES,
         )
@@ -158,7 +158,7 @@ class ResidualMomentumStrategy:
         *,
         context: FoldContext,
     ) -> FittedResidualMomentumStrategy:
-        projected = select_feature_view(
+        projected = build_feature_view(
             train.features,
             required_features=self.required_features(),
         )

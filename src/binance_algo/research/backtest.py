@@ -21,8 +21,8 @@ from binance_algo.research.contracts import (
     FEATURE_KEY_COLUMNS,
     FoldContext,
     TrainingDataset,
-    select_feature_view,
 )
+from binance_algo.research.datasets.views import build_feature_view, build_target_view
 from binance_algo.research.portfolio.base import PortfolioPolicy
 from binance_algo.research.strategies.base import Strategy
 from binance_algo.research.visualization import render_pnl_svg
@@ -217,26 +217,24 @@ def _run_fold(
     cost_multiplier: float,
     signal_delay_bars: int,
 ) -> pl.DataFrame:
-    train_features = select_feature_view(
+    train_features = build_feature_view(
         train,
         required_features=strategy.required_features(),
     )
     target_column = strategy.target_column()
     target: pl.DataFrame | None = None
     if target_column is not None:
-        if target_column not in train.columns:
-            raise ResearchError(f"training target column is missing: {target_column}")
-        target = train.select(*FEATURE_KEY_COLUMNS, target_column)
+        target = build_target_view(train, target_column=target_column)
     fitted = strategy.fit(
         TrainingDataset(features=train_features, target=target),
         context=context,
     )
-    test_features = select_feature_view(
+    test_features = build_feature_view(
         test,
         required_features=strategy.required_features(),
     )
     score_frame = fitted.score(test_features, context=context).frame
-    market_state = select_feature_view(
+    market_state = build_feature_view(
         test,
         required_features=portfolio_policy.required_features(),
     )
