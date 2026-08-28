@@ -74,6 +74,14 @@ from binance_algo.logging import configure_logging, get_logger
 from binance_algo.observability.metrics import RecorderMetrics
 from binance_algo.research.dataset import build_and_persist_research_dataset
 from binance_algo.research.datasets.references import load_dataset_reference
+from binance_algo.research.experiments.campaign import (
+    CampaignPlan,
+    campaign_spec_from_stored_payload,
+    load_campaign_spec,
+    plan_campaign,
+)
+from binance_algo.research.experiments.campaign_runner import CampaignRunner
+from binance_algo.research.experiments.compare import write_campaign_comparison
 from binance_algo.research.experiments.models import HypothesisSpec
 from binance_algo.research.experiments.registry import sync_builtin_registry
 from binance_algo.research.experiments.runner import (
@@ -95,6 +103,7 @@ research_registry_app = typer.Typer(help="Initialize and inspect the research re
 research_hypothesis_app = typer.Typer(help="Register and inspect research hypotheses.")
 research_feature_app = typer.Typer(help="Inspect persisted feature definitions.")
 research_experiment_app = typer.Typer(help="Run and verify immutable research experiments.")
+research_campaign_app = typer.Typer(help="Plan, run, resume, and compare research campaigns.")
 app.add_typer(exchange_info_app, name="exchange-info")
 app.add_typer(universe_app, name="universe")
 app.add_typer(backfill_app, name="backfill")
@@ -106,6 +115,7 @@ research_app.add_typer(research_registry_app, name="registry")
 research_app.add_typer(research_hypothesis_app, name="hypothesis")
 research_app.add_typer(research_feature_app, name="feature")
 research_app.add_typer(research_experiment_app, name="experiment")
+research_app.add_typer(research_campaign_app, name="campaign")
 console = Console()
 
 
@@ -163,6 +173,16 @@ def _experiment_runner(settings: Settings, store: ResearchStore) -> ExperimentRu
     return ExperimentRunner(
         store=store,
         data_root=settings.data_root,
+        research_config=settings.research,
+        compression=settings.storage.parquet_compression,
+    )
+
+
+def _campaign_runner(settings: Settings, store: ResearchStore) -> CampaignRunner:
+    return CampaignRunner(
+        store=store,
+        data_root=settings.data_root,
+        reports_root=settings.reports_root,
         research_config=settings.research,
         compression=settings.storage.parquet_compression,
     )
@@ -882,6 +902,197 @@ def research_experiment_verify(ctx: typer.Context, experiment_id: str) -> None:
         _fail(exc)
     console.print(
         f"Experiment artifacts PASS: run={verification.run_id}, files={verification.checked_files}"
+    )
+
+
+def _print_campaign_plan(plan: CampaignPlan) -> None:
+    table = Table(title=f"campaign plan — {plan.source.campaign.name}")
+    table.add_column("ordinal", justify="right")
+    table.add_column("experiment id")
+    table.add_column("strategy parameters")
+    table.add_column("portfolio parameters")
+    for trial in plan.trials[:5]:
+        table.add_row(
+            str(trial.ordinal),
+            trial.experiment_id[:24],
+            orjson.dumps(trial.tags["strategy_parameters"], option=orjson.OPT_SORT_KEYS).decode(),
+            orjson.dumps(trial.tags["portfolio_parameters"], option=orjson.OPT_SORT_KEYS).decode(),
+        )
+    console.print(table)
+    console.print(
+        f"Campaign ID: {plan.campaign_id}\n"
+        f"Combinations: possible={plan.possible_combinations}, "
+        f"valid={plan.valid_combinations}, "
+        f"rejected_by_constraints={plan.rejected_by_constraints}\n"
+        "Dry plan only: no campaign, experiment, or run was persisted."
+    )
+
+
+@research_campaign_app.command("plan")
+def research_campaign_plan(
+    ctx: typer.Context,
+    file: Annotated[
+        Path,
+        typer.Option("--file", help="Strict campaign YAML file.", exists=True, dir_okay=False),
+    ],
+    allow_large_campaign: Annotated[
+        bool,
+        typer.Option("--allow-large-campaign", help="Override the campaign max-trials guard."),
+    ] = False,
+) -> None:
+    """Expand and validate a campaign without mutating the registry."""
+
+    try:
+        settings = _settings(ctx)
+        _configure(settings)
+        plan = plan_campaign(
+            load_campaign_spec(file),
+            project_root=settings.project_root,
+            data_root=settings.data_root,
+            research_config=settings.research,
+            allow_large_campaign=allow_large_campaign,
+        )
+    except BinanceAlgoError as exc:
+        _fail(exc)
+    _print_campaign_plan(plan)
+
+
+@research_campaign_app.command("run")
+def research_campaign_run(
+    ctx: typer.Context,
+    file: Annotated[
+        Path,
+        typer.Option("--file", help="Strict campaign YAML file.", exists=True, dir_okay=False),
+    ],
+    dry_run: Annotated[
+        bool,
+        typer.Option("--dry-run", help="Plan only; do not persist campaign state or runs."),
+    ] = False,
+    allow_large_campaign: Annotated[
+        bool,
+        typer.Option("--allow-large-campaign", help="Override the campaign max-trials guard."),
+    ] = False,
+) -> None:
+    """Execute every valid trial with isolated failures and resumable state."""
+
+    try:
+        settings = _settings(ctx)
+        _configure(settings)
+        plan = plan_campaign(
+            load_campaign_spec(file),
+            project_root=settings.project_root,
+            data_root=settings.data_root,
+            research_config=settings.research,
+            allow_large_campaign=allow_large_campaign,
+        )
+        if dry_run:
+            _print_campaign_plan(plan)
+            return
+        store = ResearchStore(settings.research_db_path)
+        store.initialize()
+        sync_builtin_registry(store, research_config=settings.research)
+        result = _campaign_runner(settings, store).run(plan)
+    except (BinanceAlgoError, OSError, pl.exceptions.PolarsError) as exc:
+        _fail(exc if isinstance(exc, BinanceAlgoError) else ResearchError(str(exc)))
+    console.print(
+        f"Campaign {result.campaign.status.value}: {result.campaign.name}\n"
+        f"Campaign ID: {result.campaign.campaign_id}\n"
+        f"Trials: planned={result.planned_count}, executed={result.executed_count}, "
+        f"cache_hits={result.cache_hit_count}, succeeded={result.succeeded_count}, "
+        f"failed={result.failed_count}\n"
+        f"Comparison: {result.comparison.comparison_path}\n"
+        f"Report: {result.comparison.report_markdown_path}"
+    )
+
+
+@research_campaign_app.command("resume")
+def research_campaign_resume(ctx: typer.Context, campaign_id_or_name: str) -> None:
+    """Resume a partial campaign without duplicating definitions or successful runs."""
+
+    try:
+        settings = _settings(ctx)
+        _configure(settings)
+        store = ResearchStore(settings.research_db_path)
+        campaign = store.get_campaign(campaign_id_or_name)
+        if campaign is None:
+            raise ResearchError(f"unknown campaign: {campaign_id_or_name}")
+        source = campaign_spec_from_stored_payload(campaign.spec_json)
+        plan = plan_campaign(
+            source,
+            project_root=settings.project_root,
+            data_root=settings.data_root,
+            research_config=settings.research,
+        )
+        if plan.campaign_id != campaign.campaign_id:
+            raise ResearchError(
+                "campaign code/data fingerprint changed; resume requires the original state"
+            )
+        result = _campaign_runner(settings, store).run(plan)
+    except (BinanceAlgoError, OSError, pl.exceptions.PolarsError) as exc:
+        _fail(exc if isinstance(exc, BinanceAlgoError) else ResearchError(str(exc)))
+    console.print(
+        f"Campaign resume {result.campaign.status.value}: executed={result.executed_count}, "
+        f"cache_hits={result.cache_hit_count}, failed={result.failed_count}\n"
+        f"Comparison: {result.comparison.comparison_path}"
+    )
+
+
+@research_campaign_app.command("status")
+def research_campaign_status(ctx: typer.Context, campaign_id_or_name: str) -> None:
+    """Show durable campaign and trial status without hiding failures."""
+
+    try:
+        settings = _settings(ctx)
+        _configure(settings)
+        store = ResearchStore(settings.research_db_path)
+        campaign = store.get_campaign(campaign_id_or_name)
+        if campaign is None:
+            raise ResearchError(f"unknown campaign: {campaign_id_or_name}")
+        experiments = store.list_campaign_experiments(campaign.campaign_id)
+    except BinanceAlgoError as exc:
+        _fail(exc)
+    counts: dict[str, int] = {}
+    for _, identifier, _ in experiments:
+        runs = store.list_runs(experiment_id_value=identifier)
+        status = runs[-1].status.value if runs else "NOT_RUN"
+        counts[status] = counts.get(status, 0) + 1
+    table = Table(title=f"campaign status — {campaign.name}")
+    table.add_column("status")
+    table.add_column("trials", justify="right")
+    for status, count in sorted(counts.items()):
+        table.add_row(status, str(count))
+    console.print(table)
+    console.print(
+        f"Campaign ID: {campaign.campaign_id}\n"
+        f"State: {campaign.status.value}; trials={campaign.trial_count}\n"
+        f"Last error: {campaign.last_error or '-'}"
+    )
+
+
+@research_campaign_app.command("compare")
+def research_campaign_compare(ctx: typer.Context, campaign_id_or_name: str) -> None:
+    """Regenerate the aggregate report with every persisted trial."""
+
+    try:
+        settings = _settings(ctx)
+        _configure(settings)
+        store = ResearchStore(settings.research_db_path)
+        campaign = store.get_campaign(campaign_id_or_name)
+        if campaign is None:
+            raise ResearchError(f"unknown campaign: {campaign_id_or_name}")
+        result = write_campaign_comparison(
+            store=store,
+            campaign=campaign,
+            reports_root=settings.reports_root,
+            compression=settings.storage.parquet_compression,
+        )
+    except (BinanceAlgoError, OSError, pl.exceptions.PolarsError) as exc:
+        _fail(exc if isinstance(exc, BinanceAlgoError) else ResearchError(str(exc)))
+    console.print(
+        f"Campaign comparison: trials={result.trial_count}, "
+        f"succeeded={result.succeeded_count}, failed={result.failed_count}\n"
+        f"Parquet: {result.comparison_path}\n"
+        f"Reports: {result.report_json_path}\n         {result.report_markdown_path}"
     )
 
 

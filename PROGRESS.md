@@ -69,11 +69,16 @@ baseline auditável; seu resultado negativo não foi promovido a alpha. A Fase 4
 - [x] Experiment runner pelo registry, conclusão SQLite atômica e falha explícita
 - [x] CLI `research experiment list/show/rerun/verify` e baseline legado na rota registrada
 - [x] Rerun com confirmação determinística de `result_digest` e detecção de corrupção
+- [x] Fase 3.5 PR 6: campaign YAML estrito, expansão cartesiana e constraints determinísticas
+- [x] Guard `max_trials`, dry-run sem persistência e IDs independentes de formatação/path
+- [x] Process workers locais, falha isolada, estados de campanha, resume e cache verificado
+- [x] CLI `research campaign plan/run/resume/status/compare` e report de todos os trials
+- [x] Smoke campaign com 9 combinações possíveis, 3 válidas e 6 rejeitadas pela constraint
 
 ## Pending
 
-- [ ] PR 6: campaign planner/runner determinístico com resume/cache
-- [ ] PRs 7–9: ledger/ablações, robustez/promoção, performance e documentação final
+- [ ] PR 7: ledger e ablações
+- [ ] PRs 8–9: robustez/promoção, performance e documentação final
 
 ## Blockers
 
@@ -110,6 +115,8 @@ baseline auditável; seu resultado negativo não foi promovido a alpha. A Fase 4
   `pytest -m "not network"` com 105 passed/2 deselected
 - gates PR 5: `ruff format --check` em 123 arquivos, `ruff check`, mypy estrito em 74 módulos e
   `pytest -m "not network"` com 110 passed/2 deselected
+- gates PR 6: `ruff format --check` em 131 arquivos, `ruff check`, mypy estrito em 77 módulos e
+  `pytest -m "not network"` com 115 passed/2 deselected
 - registry real: schema 2 em `research.sqlite3`, WAL e foreign keys ativos, 18 features e o
   feature set `phase3_baseline_features:v1`; registro repetido da hipótese
   `HYP-RESMOM-0002` permaneceu idempotente

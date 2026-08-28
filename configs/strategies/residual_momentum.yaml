@@ -1,0 +1,6 @@
+name: residual_momentum
+version: "1"
+parameters:
+  momentum_weight_1h: 0.20
+  momentum_weight_4h: 0.30
+  momentum_weight_24h: 0.50

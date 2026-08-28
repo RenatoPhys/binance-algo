@@ -22,6 +22,8 @@
   scores/positions long-form em Parquet.
 - Experiment runner offline com factories explícitas, conclusão transacional, verify/rerun e
   confirmação determinística de `result_digest`; gráficos continuam opt-in.
+- Campaign YAML estrito com grid/constraints determinísticos, guard de trials, dry-run,
+  multiprocessing local, falhas isoladas, resume/cache e comparison completo.
 
 ## 0.5.0 — 2026-08-28
 

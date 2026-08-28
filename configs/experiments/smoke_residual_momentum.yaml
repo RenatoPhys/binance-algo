@@ -1,0 +1,67 @@
+campaign:
+  name: smoke_residual_momentum
+  description: >-
+    Smoke determinístico de três variantes válidas do baseline residual momentum. O objetivo é
+    validar expansão, constraints, execução, resume e cache; não selecionar alpha.
+  hypothesis_id: HYP-RESMOM-0002
+  artifact_policy: summary
+  max_trials: 3
+
+dataset:
+  manifest: latest
+
+feature_set:
+  name: phase3_baseline_features
+  version: "1"
+
+label:
+  name: gross_forward_return_1h
+  version: "1"
+  horizon_minutes: 60
+
+strategy:
+  name: residual_momentum
+  version: "1"
+  fixed:
+    momentum_weight_4h: 0.30
+  grid:
+    momentum_weight_1h: [0.10, 0.20, 0.30]
+    momentum_weight_24h: [0.40, 0.50, 0.60]
+
+portfolio:
+  name: neutral_long_short
+  version: "1"
+  fixed:
+    no_trade_score_band: 0.10
+    gross_exposure: 0.50
+    annual_volatility_target: 0.15
+    max_symbol_weight: 0.25
+
+execution:
+  name: bar_next_open
+  version: "1"
+  fixed: {}
+
+costs:
+  name: configured_taker
+  version: "1"
+  fixed:
+    cost_multiplier: 1.0
+
+validation:
+  split_plan: expanding_walk_forward_v1
+  stress_cost_multipliers: [1.5, 2.0]
+  stress_signal_delay_bars: [1]
+  bootstrap_samples: 100
+  bootstrap_block_hours: 24
+  require_parameter_sum:
+    fields:
+      - momentum_weight_1h
+      - momentum_weight_4h
+      - momentum_weight_24h
+    equals: 1.0
+
+runner:
+  max_workers: 2
+  fail_fast: false
+  resume: true

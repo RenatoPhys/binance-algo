@@ -1,0 +1,7 @@
+name: neutral_long_short
+version: "1"
+parameters:
+  no_trade_score_band: 0.10
+  gross_exposure: 0.50
+  annual_volatility_target: 0.15
+  max_symbol_weight: 0.25
