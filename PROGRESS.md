@@ -59,10 +59,14 @@ baseline auditável; seu resultado negativo não foi promovido a alpha. A Fase 4
 - [x] `DatasetReference` compatível com manifests v1 e sem paths na identidade
 - [x] Fingerprint `lineage_v2` por inputs manifestados, schema, universo, features, label e builder
 - [x] Checksums lógico do conteúdo e físico do Parquet persistidos separadamente
+- [x] Fase 3.5 PR 4: `ResearchStore` SQLite isolado, migrations 1–2 e schema versionado
+- [x] Hipóteses, feature registry, feature sets, experimentos, runs/tentativas, métricas e artefatos
+- [x] `experiment_id` canônico sem paths, code fingerprint e `result_digest` independente
+- [x] State machines transacionais, recuperação de runs stale e registro concorrente idempotente
+- [x] CLI `research registry`, `research hypothesis` e `research feature`
 
 ## Pending
 
-- [ ] PR 4: ResearchStore, migrations, experiment identity e code fingerprint
 - [ ] PR 5: artifact pipeline atômico e experiment runner
 - [ ] PR 6: campaign planner/runner determinístico com resume/cache
 - [ ] PRs 7–9: ledger/ablações, robustez/promoção, performance e documentação final
@@ -98,6 +102,11 @@ baseline auditável; seu resultado negativo não foi promovido a alpha. A Fase 4
 - `pytest -m "not network"`: 78 passed, 2 deselected
 - gates PR 3: `ruff format --check` em 105 arquivos, `ruff check`, mypy estrito em 62 módulos e
   `pytest -m "not network"` com 87 passed/2 deselected
+- gates PR 4: `ruff format --check` em 117 arquivos, `ruff check`, mypy estrito em 70 módulos e
+  `pytest -m "not network"` com 105 passed/2 deselected
+- registry real: schema 2 em `research.sqlite3`, WAL e foreign keys ativos, 18 features e o
+  feature set `phase3_baseline_features:v1`; registro repetido da hipótese
+  `HYP-RESMOM-0002` permaneceu idempotente
 - testes `network`: não reexecutados neste incremento offline; referência anterior de 2 passed
 - `binance-algo doctor`: todos os checks passaram; SQLite `journal_mode=wal`
 - golden sintético: `tests/golden/research_phase3_synthetic.json`, SHA-256
@@ -155,8 +164,9 @@ baseline auditável; seu resultado negativo não foi promovido a alpha. A Fase 4
 - regressão PR 3: todas as colunas/valores do dataset v1 e v2 são idênticos, exceto
   `feature_version` e `dataset_schema_version`; a curva OOS v2 (1.008 × 22) é exatamente igual à
   curva `974ab2c8643ace95` e mantém retorno -14,6882%, Sharpe -25,050 e erro contábil zero
-- o run do backtest v2 é `bb685672ab78d8b5`; a mudança de run ID decorre da identidade legada que
-  ainda inclui o path do dataset e será removida pelo PR 4
+- o run do backtest v2 é `bb685672ab78d8b5`; essa identidade pertence ao adaptador legado e ainda
+  inclui o path. A identidade canônica do PR 4 usa `DatasetReference.identity_payload()` sem
+  paths; o CLI legado passará a executá-la pelo novo runner no PR 5
 - baseline OOS: retorno de preço somado +1,527%, funding -0,046%, custos explícitos 17,348%,
   retorno composto líquido -14,688%, max drawdown -14,711% e turnover 266,888
 - estabilidade: custos 1,5×/2× produziram -21,781%/-28,285%; atraso de uma barra -12,760%;

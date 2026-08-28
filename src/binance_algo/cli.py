@@ -11,11 +11,13 @@ from typing import Annotated, NoReturn
 import orjson
 import polars as pl
 import typer
+import yaml
+from pydantic import ValidationError
 from rich.console import Console
 from rich.table import Table
 
 from binance_algo.clock import ExchangeClock
-from binance_algo.common.errors import BinanceAlgoError, DataQualityError
+from binance_algo.common.errors import BinanceAlgoError, DataQualityError, ResearchError
 from binance_algo.config import Settings, load_settings
 from binance_algo.data.archive_client import (
     ArchiveDownloader,
@@ -72,6 +74,9 @@ from binance_algo.logging import configure_logging, get_logger
 from binance_algo.observability.metrics import RecorderMetrics
 from binance_algo.research.baseline import run_and_persist_phase3_baseline
 from binance_algo.research.dataset import build_and_persist_research_dataset
+from binance_algo.research.experiments.models import HypothesisSpec
+from binance_algo.research.experiments.registry import sync_builtin_registry
+from binance_algo.research.experiments.store import ResearchStore
 
 app = typer.Typer(help="Auditable Binance USD-M Futures public-data foundation.")
 exchange_info_app = typer.Typer(help="Snapshot and inspect exchange metadata.")
@@ -80,7 +85,10 @@ backfill_app = typer.Typer(help="Download official historical public archives.")
 data_app = typer.Typer(help="Normalize, catalog, and audit canonical market data.")
 recorder_app = typer.Typer(help="Record resilient public market streams to Parquet.")
 funding_app = typer.Typer(help="Ingest public historical funding events.")
-research_app = typer.Typer(help="Build causal datasets and run the Phase 3 baseline.")
+research_app = typer.Typer(help="Build causal datasets and manage reproducible research.")
+research_registry_app = typer.Typer(help="Initialize and inspect the research registry.")
+research_hypothesis_app = typer.Typer(help="Register and inspect research hypotheses.")
+research_feature_app = typer.Typer(help="Inspect persisted feature definitions.")
 app.add_typer(exchange_info_app, name="exchange-info")
 app.add_typer(universe_app, name="universe")
 app.add_typer(backfill_app, name="backfill")
@@ -88,6 +96,9 @@ app.add_typer(data_app, name="data")
 app.add_typer(recorder_app, name="recorder")
 app.add_typer(funding_app, name="funding")
 app.add_typer(research_app, name="research")
+research_app.add_typer(research_registry_app, name="registry")
+research_app.add_typer(research_hypothesis_app, name="hypothesis")
+research_app.add_typer(research_feature_app, name="feature")
 console = Console()
 
 
@@ -129,6 +140,16 @@ def _configure(settings: Settings) -> None:
 def _fail(exc: BinanceAlgoError) -> NoReturn:
     console.print(f"[red]error:[/red] {exc}")
     raise typer.Exit(code=1) from exc
+
+
+def _hypothesis_file(path: Path) -> HypothesisSpec:
+    try:
+        payload = yaml.safe_load(path.read_text(encoding="utf-8"))
+        if not isinstance(payload, dict):
+            raise ResearchError("hypothesis file root must be a mapping")
+        return HypothesisSpec.model_validate(payload)
+    except (OSError, yaml.YAMLError, ValidationError) as exc:
+        raise ResearchError(f"cannot load hypothesis file {path}: {exc}") from exc
 
 
 @app.command()
@@ -585,6 +606,158 @@ def data_audit(
     console.print(f"Reports: {json_report}\n         {markdown_report}")
     if not report.passed:
         raise typer.Exit(code=1)
+
+
+@research_registry_app.command("init")
+def research_registry_init(ctx: typer.Context) -> None:
+    """Create the research database and register built-in feature definitions."""
+
+    try:
+        settings = _settings(ctx)
+        _configure(settings)
+        store = ResearchStore(settings.research_db_path)
+        schema_version = store.initialize()
+        sync = sync_builtin_registry(store, research_config=settings.research)
+    except BinanceAlgoError as exc:
+        _fail(exc)
+    console.print(
+        f"Research registry initialized: schema {schema_version}, "
+        f"{sync.feature_count} features, feature set {sync.feature_set_id}\n"
+        f"SQLite: {settings.research_db_path}"
+    )
+
+
+@research_registry_app.command("migrate")
+def research_registry_migrate(ctx: typer.Context) -> None:
+    """Apply pending versioned research migrations transactionally."""
+
+    try:
+        settings = _settings(ctx)
+        _configure(settings)
+        schema_version = ResearchStore(settings.research_db_path).initialize()
+    except BinanceAlgoError as exc:
+        _fail(exc)
+    console.print(f"Research registry migrated to schema {schema_version}")
+
+
+@research_registry_app.command("status")
+def research_registry_status(ctx: typer.Context) -> None:
+    """Show schema, WAL/foreign-key state, and durable registry counts."""
+
+    try:
+        settings = _settings(ctx)
+        _configure(settings)
+        if not settings.research_db_path.exists():
+            raise ResearchError(
+                "research registry is not initialized; run `binance-algo research registry init`"
+            )
+        status = ResearchStore(settings.research_db_path).status()
+    except BinanceAlgoError as exc:
+        _fail(exc)
+    table = Table(title="research registry")
+    table.add_column("entity")
+    table.add_column("count", justify="right")
+    for entity, count in status.counts.items():
+        table.add_row(entity.removeprefix("research_"), str(count))
+    console.print(table)
+    console.print(
+        f"Schema: {status.schema_version}/{status.latest_schema_version}; "
+        f"journal={status.journal_mode}; foreign_keys={'on' if status.foreign_keys else 'off'}\n"
+        f"SQLite: {status.database_path}"
+    )
+
+
+@research_hypothesis_app.command("create")
+def research_hypothesis_create(
+    ctx: typer.Context,
+    file: Annotated[
+        Path,
+        typer.Option("--file", help="Strict hypothesis YAML file.", exists=True, dir_okay=False),
+    ],
+) -> None:
+    """Register one immutable hypothesis definition idempotently."""
+
+    try:
+        settings = _settings(ctx)
+        _configure(settings)
+        store = ResearchStore(settings.research_db_path)
+        store.initialize()
+        registered = store.register_hypothesis(_hypothesis_file(file))
+    except BinanceAlgoError as exc:
+        _fail(exc)
+    console.print(f"Hypothesis registered: {registered.hypothesis_id} [{registered.status.value}]")
+
+
+@research_hypothesis_app.command("list")
+def research_hypothesis_list(ctx: typer.Context) -> None:
+    """List hypotheses without hiding rejected or inconclusive definitions."""
+
+    try:
+        settings = _settings(ctx)
+        _configure(settings)
+        hypotheses = ResearchStore(settings.research_db_path).list_hypotheses()
+    except BinanceAlgoError as exc:
+        _fail(exc)
+    table = Table(title="research hypotheses")
+    table.add_column("id")
+    table.add_column("status")
+    table.add_column("title")
+    for hypothesis in hypotheses:
+        table.add_row(hypothesis.hypothesis_id, hypothesis.status.value, hypothesis.title)
+    console.print(table)
+
+
+@research_hypothesis_app.command("show")
+def research_hypothesis_show(ctx: typer.Context, hypothesis_id: str) -> None:
+    """Show one durable hypothesis definition."""
+
+    try:
+        settings = _settings(ctx)
+        _configure(settings)
+        hypothesis = ResearchStore(settings.research_db_path).get_hypothesis(hypothesis_id)
+        if hypothesis is None:
+            raise ResearchError(f"unknown hypothesis: {hypothesis_id}")
+    except BinanceAlgoError as exc:
+        _fail(exc)
+    console.print_json(json=orjson.dumps(hypothesis.model_dump(mode="json")).decode())
+
+
+@research_feature_app.command("list")
+def research_feature_list(ctx: typer.Context) -> None:
+    """List persisted feature IDs, versions, and lifecycle status."""
+
+    try:
+        settings = _settings(ctx)
+        _configure(settings)
+        features = ResearchStore(settings.research_db_path).list_feature_definitions()
+    except BinanceAlgoError as exc:
+        _fail(exc)
+    table = Table(title="research features")
+    table.add_column("feature id")
+    table.add_column("status")
+    table.add_column("lookback")
+    for feature in features:
+        table.add_row(
+            str(feature["feature_id"]),
+            str(feature["status"]),
+            str(feature["lookback"]),
+        )
+    console.print(table)
+
+
+@research_feature_app.command("show")
+def research_feature_show(ctx: typer.Context, feature_id: str) -> None:
+    """Show one persisted feature contract."""
+
+    try:
+        settings = _settings(ctx)
+        _configure(settings)
+        feature = ResearchStore(settings.research_db_path).get_feature_definition(feature_id)
+        if feature is None:
+            raise ResearchError(f"unknown feature: {feature_id}")
+    except BinanceAlgoError as exc:
+        _fail(exc)
+    console.print_json(json=orjson.dumps(feature).decode())
 
 
 @research_app.command("build")

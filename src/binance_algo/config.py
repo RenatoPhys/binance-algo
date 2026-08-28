@@ -62,6 +62,7 @@ class BinanceConfig(StrictModel):
 class StorageConfig(StrictModel):
     root: Path = Path("var/data")
     state_db: Path = Path("var/state/ingestion.sqlite3")
+    research_db: Path = Path("var/state/research.sqlite3")
     duckdb: Path = Path("var/state/market_data.duckdb")
     reports_root: Path = Path("var/reports")
     parquet_compression: Literal["zstd", "snappy"] = "zstd"
@@ -245,6 +246,11 @@ class Settings(StrictModel):
     @property
     def state_db_path(self) -> Path:
         path = self.storage.state_db
+        return path if path.is_absolute() else self.project_root / path
+
+    @property
+    def research_db_path(self) -> Path:
+        path = self.storage.research_db
         return path if path.is_absolute() else self.project_root / path
 
     @property

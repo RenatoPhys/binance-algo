@@ -124,3 +124,27 @@ backtest.py: train slice -> fit -> test score -> target weights -> accounting
 O engine conhece somente os contratos, as colunas contábeis padronizadas e os folds. Nomes/pesos
 de momentum e regras de seleção/neutralização não estão no engine. A CLI antiga constrói os
 componentes pelo adaptador; não há rota paralela de cálculo.
+
+O PR 4 acrescenta o plano de controle durável da pesquisa:
+
+```text
+DatasetReference + CodeFingerprint + componentes
+                       |
+                       v
+                ExperimentSpec -- JSON canônico/SHA-256 --> experiment_id
+                       |                                       |
+                       v                                       v
+        ResearchStore (definitions)              runs + attempts + states
+                                                               |
+                                                               v
+                                             metrics + artifact checksums
+                                                               |
+                                                               v
+                                                        result_digest
+```
+
+O banco `research.sqlite3` é separado do `ingestion.sqlite3`: o primeiro registra decisões e
+resultados de pesquisa, enquanto o segundo continua sendo a autoridade sobre materialização de
+dados. Paths são localizadores operacionais e não participam da identidade do experimento. O
+registro já aceita as definições e o lifecycle de runs, mas a execução e promoção atômica de
+artefatos serão conectadas somente pelo runner do PR 5.

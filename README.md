@@ -7,8 +7,9 @@ atômico, auditoria DuckDB e replay temporal determinístico. A Fase 3 adicionou
 dataset causal e um baseline vetorizado walk-forward. A Fase 3.5 agora evolui essa referência para
 uma plataforma reproduzível de pesquisa: o golden baseline está preservado e estratégia,
 portfólio e engine usam contratos separados; feature/label registries, dataset views com roles e
-fingerprint de lineage v2 já estão ativos. Não há autenticação, simulador de execução, Demo Trading
-ou envio de ordens.
+fingerprint de lineage v2 já estão ativos. O `ResearchStore` persiste hipóteses, componentes,
+experimentos imutáveis, tentativas, métricas e artefatos por identidade canônica. Não há
+autenticação, simulador de execução, Demo Trading ou envio de ordens.
 
 ## Segurança por padrão
 
@@ -113,6 +114,7 @@ var/data/gold/binance/usdm/research_dataset/version=<hash>/*
 var/data/gold/binance/usdm/research_backtest/version=<hash>/*
 var/data/quarantine/recorder_recovery/<timestamp>/*
 var/state/ingestion.sqlite3
+var/state/research.sqlite3
 var/state/market_data.duckdb
 var/reports/downloads_*.{json,md}
 var/reports/normalization_*.{json,md}
@@ -200,8 +202,9 @@ O volume `./var` preserva datasets locais. A imagem fixa as duas flags de segura
 
 A Fase 3.5 é a plataforma de experimentos e pesquisa em escala. Golden regression, contratos,
 extração de residual momentum/neutral long-short e registries/views do dataset estão concluídos;
-consulte [docs/research_platform.md](docs/research_platform.md). O próximo incremento cria
-`ResearchStore`, migrations e identidade imutável de experimento. Campaigns e ledger ainda
+consulte [docs/research_platform.md](docs/research_platform.md). `ResearchStore`, migrations,
+code fingerprint e identidade imutável de experimento também estão concluídos. O próximo
+incremento cria o pipeline atômico de artefatos e o experiment runner; campaigns e ledger ainda
 precisam ser entregues antes de qualquer pesquisa extensa. A Fase 4 não foi iniciada. Demo
 Trading, alpha promovido e live permanecem fora de escopo; `LIVE_TRADING` e envio de ordens
 continuam impossíveis por configuração.

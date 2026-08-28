@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased — Fase 3.5 PR 1
+## Unreleased — Fase 3.5
 
 - Golden snapshot sintético e registro dos checksums do baseline real da Fase 3.
 - Contratos tipados para strategy/fitted strategy, portfolio policy e contexto walk-forward.
@@ -11,6 +11,13 @@
   separada.
 - CLI legada migrada para o adaptador do novo engine, com golden sintético e artifacts reais
   byte a byte idênticos.
+- Feature/label registries, feature sets canônicos, dataset roles e lineage v2 sem paths.
+- `ResearchStore` SQLite isolado, migrations atômicas, WAL, foreign keys e state machines de
+  hipóteses e runs.
+- Identidade imutável de experimento por JSON canônico, code fingerprint clean/dirty/fallback e
+  result digest separado.
+- Registro idempotente de hipóteses, features, feature sets, experimentos, métricas e artefatos,
+  com CLI de inicialização, status e inspeção.
 
 ## 0.5.0 — 2026-08-28
 

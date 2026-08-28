@@ -1,0 +1,17 @@
+hypothesis_id: HYP-RESMOM-0002
+title: Slower residual momentum may survive explicit trading costs
+mechanism: >-
+  Idiosyncratic information may diffuse over several hours after removing the shared BTC/ETH
+  benchmark component, while slower rebalancing may reduce turnover enough to improve net results.
+expected_direction: positive cross-sectional persistence after costs
+expected_horizon: 4h to 168h
+target_universe: point-in-time Binance USD-M perpetual universe with explicit membership history
+preregistered_success_criteria:
+  net_sharpe_min: "0.5"
+  positive_fold_fraction_min: "0.6"
+  cost_stress_multiplier: "1.5"
+  maximum_drawdown_floor: "-0.25"
+status: DRAFT
+notes: >-
+  Infrastructure example only. Registration is not evidence of support and does not authorize a
+  campaign before the campaign runner and multiple-testing controls are implemented.

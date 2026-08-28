@@ -177,3 +177,31 @@ exatamente pela chave. A implementação neutral long/short v1 exige `rolling_be
 
 O painel de pesos precisa cobrir as mesmas decisões/símbolos do teste. O engine pode atrasar o
 painel para stress de sinal, mas não permite que a política leia `future_*` ou `outcome_*`.
+
+## Research registry — schema version 2
+
+O banco `research.sqlite3` possui migrations próprias e 12 tabelas de domínio:
+`hypotheses`, `campaigns`, `feature_definitions`, `feature_sets`, `feature_set_members`,
+`experiments`, `campaign_experiments`, `experiment_runs`, `metrics`, `artifacts`,
+`feature_evaluations` e `promotions`. Foreign keys são obrigatórias e migrations falham de forma
+atômica.
+
+`experiment_id` é o SHA-256 hexadecimal completo do JSON canônico de `ExperimentSpec`. A
+identidade inclui `DatasetIdentity`, feature set, label, componentes/params, execução, custos,
+splits, validação, seed, code fingerprint e política de artefatos. Não inclui path de manifesto,
+timestamps operacionais, tentativa, métricas ou resultados.
+
+A chave lógica de run é `experiment_id + attempt`; a tentativa é alocada transacionalmente.
+Estados válidos:
+
+```text
+PENDING -> QUEUED -> RUNNING -> SUCCEEDED
+             |          |  \-> FAILED
+             |          \---> STALE -> QUEUED
+             \--------------> CANCELLED
+```
+
+Um run `SUCCEEDED` exige `result_digest`, calculado canonicamente sobre métricas e checksums dos
+artefatos. Métricas são identificadas por run, nome, scope, fold, regime e stress; artefatos por
+run, tipo e path lógico. Rerun idêntico é idempotente, enquanto conteúdo divergente sob a mesma
+chave é conflito.

@@ -2,13 +2,14 @@
 
 ## Estado do incremento
 
-Os PRs 1 a 3 estão implementados. O golden baseline permanece como referência e o motor agora
+Os PRs 1 a 4 estão implementados. O golden baseline permanece como referência e o motor agora
 recebe `Strategy` e `PortfolioPolicy`, usando treino e teste reais em cada fold. Residual momentum
 e neutral long/short são as primeiras implementações dos contratos. Feature/label registries,
 roles de schema, dataset views e fingerprint `lineage_v2` estão ativos. A CLI legada usa essa
-rota por meio de um adaptador explícito; não existe segundo motor. ResearchStore, experiment
-registry, campaign runner, ledger, multiple-testing adjustment e promotion gates ainda não estão
-implementados e não devem ser simulados por scripts ad hoc.
+rota por meio de um adaptador explícito; não existe segundo motor. `ResearchStore`, experiment
+registry e code fingerprint estão ativos. Campaign runner, artifact pipeline, ledger,
+multiple-testing adjustment e promotion gates ainda não estão implementados e não devem ser
+simulados por scripts ad hoc.
 
 ## Fronteiras arquiteturais
 
@@ -49,6 +50,12 @@ política converte esses scores em pesos antes da contabilidade.
 - `build_feature_view`: resolve somente features ativas no registry e exige role `FEATURE`.
 - `build_target_view`: seleciona um único label registrado em dataframe separado.
 - `DatasetReference`: referência portátil por conteúdo/lineage, sem path em sua identidade.
+- `ExperimentSpec`: composição imutável de hipótese, dataset, features, label, strategy,
+  portfólio, execução, custos, splits, validação, seed, código e política de artefatos.
+- `CodeFingerprint`: commit Git limpo, commit + SHA-256 do diff sujo ou hash determinístico da
+  árvore de fontes quando Git não está disponível.
+- `ResearchStore`: registry SQLite transacional de hipóteses, componentes, experimentos,
+  tentativas, métricas e artefatos.
 - `ResidualMomentumStrategy`: implementação fixa versionada, com pesos imutáveis e sem calibração
   OOS.
 - `NeutralLongShortPolicy`: seleção de caudas, no-trade band, neutralização net/beta, volatility
@@ -84,17 +91,35 @@ baseline, não uma hipótese promovida.
 Após a migração do PR 2, a fixture sintética, a `run_version` real e os SHA-256 do Parquet, JSON,
 Markdown e SVG permaneceram idênticos. No PR 3, o dataset schema v2 preservou todos os valores do
 schema v1 exceto os campos de versão, e a curva OOS real permaneceu exatamente igual. A
-`run_version` mudou porque a identidade legada do backtest ainda inclui o novo path do dataset;
-essa limitação é removida pelo PR 4. A CLI `research backtest` importa o adaptador
-`run_and_persist_phase3_baseline`, que constrói componentes explícitos e chama o engine genérico.
+`run_version` mudou porque a identidade legada do backtest ainda inclui o novo path do dataset.
+A identidade canônica criada no PR 4 remove essa dependência usando o payload portátil do
+`DatasetReference`; o CLI legado só passará a usá-la quando for conectado ao runner no PR 5.
+A CLI `research backtest` importa o adaptador `run_and_persist_phase3_baseline`, que constrói
+componentes explícitos e chama o engine genérico.
+
+## Identidade e ResearchStore
+
+`experiment_id` é o SHA-256 do JSON canônico do `ExperimentSpec`. Chaves são ordenadas, enums e
+timestamps são normalizados, decimais recebem representação estável e valores não finitos ou
+paths absolutos são rejeitados. Trocar dataset, feature set, label, parâmetros, custos, splits,
+seed, commit ou diff cria outra identidade. Métricas e checksums de artefatos não fazem parte
+dela: após sucesso, eles formam um `result_digest` separado.
+
+`var/state/research.sqlite3` é independente do manifesto de ingestão. As migrations 1–2 criam 12
+tabelas de domínio e seus índices, com WAL, foreign keys, `busy_timeout` e rollback atômico. Um
+experimento é imutável; rerun aloca uma nova tentativa. Runs seguem
+`PENDING -> QUEUED -> RUNNING -> SUCCEEDED|FAILED|STALE`, com cancelamento antes da execução e
+retomada explícita de `STALE`. Sucesso exige `result_digest`.
+
+O registry pode ser inicializado ou migrado repetidamente. Features embutidas, feature sets e
+hipóteses são idempotentes quando o conteúdo imutável coincide e falham diante de conflito.
 
 ## Próximos incrementos
 
-1. criar identidade imutável, ResearchStore e migrations;
-2. criar pipeline atômico de artifacts e experiment runner;
-3. criar campaign planner/runner com resume e cache;
-4. adicionar ledger, ablações, robustez, multiple testing e promotion gates;
-5. otimizar o painel e concluir documentação/aceite.
+1. criar pipeline atômico de artifacts e experiment runner;
+2. criar campaign planner/runner com resume e cache;
+3. adicionar ledger, ablações, robustez, multiple testing e promotion gates;
+4. otimizar o painel e concluir documentação/aceite.
 
 Nenhuma campanha extensa deve ser executada antes de existirem separação, registry, artifacts e
 runner (PRs 1 a 6).
