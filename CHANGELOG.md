@@ -8,6 +8,7 @@
 - Backtest vetorizado com fees, spread, slippage, funding, turnover e invariantes contábeis.
 - Walk-forward, regimes, custos 1,5×/2×, atraso, perturbações e bootstrap em blocos.
 - Relatório real da janela de 90 dias preservando o resultado negativo sem tuning retrospectivo.
+- Curva SVG automática com equity, drawdown, decomposição de custos e folds walk-forward.
 
 ## 0.4.0 — 2026-08-28
 

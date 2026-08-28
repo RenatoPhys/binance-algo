@@ -687,6 +687,7 @@ def research_backtest(
         "Baseline only; no claim of edge.\n"
         f"Run version: {result.run_version}\n"
         f"Curve: {result.curve_path}\n"
+        f"Chart: {result.report_chart_path}\n"
         f"Reports: {result.report_json_path}\n         {result.report_markdown_path}"
     )
 

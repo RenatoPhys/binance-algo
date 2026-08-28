@@ -42,6 +42,7 @@ validação; o resultado negativo não foi promovido a alpha.
 - [x] Backtest vetorizado com fees, spread, slippage, funding e turnover
 - [x] Walk-forward temporal, embargo, regimes, estresses e bootstrap em blocos
 - [x] Relatório de performance/estabilidade da Fase 3 e rerun determinístico
+- [x] Curva SVG automática de equity OOS, drawdown e decomposição do P&L por fold
 
 ## Pending
 
@@ -60,9 +61,9 @@ validação; o resultado negativo não foi promovido a alpha.
 
 - `uv sync`: passed; lockfile com 59 packages
 - `uv sync --frozen`: passed; `binance-algo==0.4.0`, lockfile com 59 packages
-- `ruff format --check .`: passed; 72 files
+- `ruff format --check .`: passed; 73 files
 - `ruff check .`: passed
-- `mypy src`: passed; 37 source files
+- `mypy src`: passed; 38 source files
 - `pytest -m "not network"`: 55 passed, 2 deselected
 - `pytest -m network`: 2 passed, 55 deselected
 - `binance-algo doctor`: todos os checks passaram; SQLite `journal_mode=wal`
@@ -94,7 +95,7 @@ validação; o resultado negativo não foi promovido a alpha.
   inválidos; rerun integral retornou `skipped`
 - dataset Fase 3: versão `50f51aa076fe5426`, 5.832 linhas, 1.944 decisões horárias, painel
   completo e zero violações temporais, duplicatas ou features nulas
-- backtest Fase 3: versão `974ab2c8643ace95`, 3 folds e 1.008 horas OOS; erro contábil zero,
+- backtest Fase 3: versão `b90ec03445dbd7a8`, 3 folds e 1.008 horas OOS; erro contábil zero,
   exposição líquida média próxima de zero e participação máxima de volume de 0,0426%
 - baseline OOS: retorno de preço somado +1,527%, funding -0,046%, custos explícitos 17,348%,
   retorno composto líquido -14,688%, max drawdown -14,711% e turnover 266,888
