@@ -97,6 +97,22 @@ research:
     account_tier: unknown
     bnb_discount: false
 
+research_platform:
+  max_campaign_trials: 1000
+  default_max_workers: 4
+  default_artifact_policy: summary
+  allow_dirty_code: true
+  promotion_requires_clean_git: true
+  stale_run_after_minutes: 60
+  heartbeat_seconds: 30
+  chart_generation: opt_in
+  min_profitable_folds: 2
+  max_month_concentration: 0.75
+  max_symbol_concentration: 0.75
+  min_neighbor_positive_fraction: 0.50
+  min_dsr_probability: 0.95
+  lockbox_manifest: null
+
 safety:
   live_trading: false
   allow_order_submission: false

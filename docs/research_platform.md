@@ -2,14 +2,13 @@
 
 ## Estado do incremento
 
-Os PRs 1 a 7 estão implementados. O golden baseline permanece como referência e o motor agora
+Os PRs 1 a 8 estão implementados. O golden baseline permanece como referência e o motor agora
 recebe `Strategy` e `PortfolioPolicy`, usando treino e teste reais em cada fold. Residual momentum
 e neutral long/short são as primeiras implementações dos contratos. Feature/label registries,
 roles de schema, dataset views e fingerprint `lineage_v2` estão ativos. A CLI legada usa essa
 rota por meio de um adaptador explícito; não existe segundo motor. `ResearchStore`, experiment
-registry, code fingerprint, artifact pipeline, experiment runner, campaign runner e feature
-ledger estão ativos. Multiple-testing adjustment e promotion gates ainda não estão implementados
-e não devem ser simulados por scripts ad hoc.
+registry, code fingerprint, artifact pipeline, experiment/campaign runners, feature ledger,
+multiple-testing adjustment e promotion gates estão ativos.
 
 ## Fronteiras arquiteturais
 
@@ -104,7 +103,7 @@ paths absolutos são rejeitados. Trocar dataset, feature set, label, parâmetros
 seed, commit ou diff cria outra identidade. Métricas e checksums de artefatos não fazem parte
 dela: após sucesso, eles formam um `result_digest` separado.
 
-`var/state/research.sqlite3` é independente do manifesto de ingestão. As migrations 1–3 criam 12
+`var/state/research.sqlite3` é independente do manifesto de ingestão. As migrations 1–4 criam 12
 tabelas de domínio e seus índices, com WAL, foreign keys, `busy_timeout` e rollback atômico. Um
 experimento é imutável; rerun aloca uma nova tentativa. Runs seguem
 `PENDING -> QUEUED -> RUNNING -> SUCCEEDED|FAILED|STALE`, com cancelamento antes da execução e
@@ -179,10 +178,31 @@ stress de custos ficam em `context_json`.
 incluindo rejeições. O exemplo `residual_momentum_ablation.yaml` testa remoção do componente 1h
 com redistribuição declarada do peso; ele registra evidência contextual, não promoção de alpha.
 
+## Robustez, múltiplos testes e promoção
+
+O relatório `campaign robustness` verifica checksums e agrega os artifacts por fold, regime, mês e
+símbolo. Ele mostra retorno gross/net, pior fold/regime, concentração, custos/atraso, distribuições
+da campanha e a vizinhança normalizada do trial de maior Sharpe. Esse trial é sempre rotulado como
+selecionado; nunca é apresentado como evidência OOS independente.
+
+O DSR desanualiza os Sharpes, usa o número explícito de trials, a dispersão observada entre eles e
+a correção por skewness/kurtosis. Amostras insuficientes falham. O PBO/CSCV exige ao menos oito
+trials comparáveis, oito segmentos pares e duas observações por segmento; abaixo disso o relatório
+usa `NOT_APPLICABLE` com motivo. O número aproximado de estratégias independentes vem do espectro
+da matriz de correlação dos retornos.
+
+Estágios são `DISCOVERY`, `CANDIDATE`, `LOCKBOX_EVALUATED`, `PHASE4_CANDIDATE`, `REJECTED` e
+`INVALIDATED`. Uma tentativa cria evento `APPROVED` ou `BLOCKED`; rejeição explícita cria evento
+imutável. Gates de candidate verificam run/artifacts, Git limpo, hipótese pré-registrada,
+performance líquida, folds, concentrações, estresses, vizinhança, DSR/PBO e campanha completa.
+
+`lockbox_manifest` permanece `null`: os 90 dias atuais participaram do desenvolvimento e não são
+uma lockbox legítima. O estado é `NOT_AVAILABLE`, e promoção para Fase 4 fica bloqueada até existir
+dataset/período independente e evento `LOCKBOX_EVALUATED` aprovado.
+
 ## Próximos incrementos
 
-1. adicionar robustez, multiple testing e promotion gates;
-2. otimizar o painel e concluir documentação/aceite.
+1. otimizar o painel e concluir documentação/aceite.
 
 Campanhas extensas continuam condicionadas aos guards, protocolo de pesquisa e gates de promoção;
 o ledger não transforma screening repetido em evidência independente.

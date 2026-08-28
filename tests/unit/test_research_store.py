@@ -25,7 +25,10 @@ from binance_algo.research.experiments.models import (
     LabelIdentity,
     MetricScope,
     ParameterizedComponent,
+    PromotionDecision,
+    PromotionEventSpec,
     ProvenanceQuality,
+    ResearchStage,
     RunStatus,
     VersionedComponent,
 )
@@ -130,13 +133,13 @@ def _initialized_store(path: Path) -> ResearchStore:
 def test_new_database_is_wal_foreign_keyed_and_idempotent(tmp_path: Path) -> None:
     settings = load_settings(BASE_CONFIG)
     store = ResearchStore(tmp_path / "research.sqlite3")
-    assert store.initialize() == 3
-    assert store.initialize() == 3
+    assert store.initialize() == 4
+    assert store.initialize() == 4
     first = sync_builtin_registry(store, research_config=settings.research)
     second = sync_builtin_registry(store, research_config=settings.research)
 
     status = store.status()
-    assert status.schema_version == status.latest_schema_version == 3
+    assert status.schema_version == status.latest_schema_version == 4
     assert status.journal_mode.lower() == "wal"
     assert status.foreign_keys
     assert status.counts["research_feature_definitions"] == first.feature_count
@@ -181,7 +184,7 @@ def test_migration_upgrade_and_failure_rollback(tmp_path: Path) -> None:
     finally:
         connection.close()
 
-    assert store.initialize() == 3
+    assert store.initialize() == 4
 
 
 def test_feature_set_sync_accepts_legacy_manifest_and_declared_ordinals(tmp_path: Path) -> None:
@@ -394,3 +397,53 @@ def test_concurrent_run_creation_allocates_distinct_attempts(tmp_path: Path) -> 
 
     assert {run.attempt for run in runs} == {1, 2}
     assert len({run.run_id for run in runs}) == 2
+
+
+def test_promotion_events_are_immutable_and_follow_explicit_stages(tmp_path: Path) -> None:
+    store = _initialized_store(tmp_path / "research.sqlite3")
+    experiment = _experiment()
+    identifier = store.list_experiment_ids()[0]
+    blocked = PromotionEventSpec(
+        experiment_id=identifier,
+        from_stage=ResearchStage.DISCOVERY,
+        to_stage=ResearchStage.CANDIDATE,
+        decision=PromotionDecision.BLOCKED,
+        criteria_snapshot={"clean_git": False},
+        reason="dirty code",
+        code_fingerprint=experiment.code_fingerprint,
+    )
+    first = store.record_promotion_event(blocked)
+    assert store.record_promotion_event(blocked).promotion_id == first.promotion_id
+
+    with pytest.raises(InvalidResearchTransition, match="DISCOVERY -> PHASE4_CANDIDATE"):
+        store.record_promotion_event(
+            blocked.model_copy(
+                update={
+                    "to_stage": ResearchStage.PHASE4_CANDIDATE,
+                    "decision": PromotionDecision.APPROVED,
+                    "reason": "invalid skip",
+                }
+            )
+        )
+
+    approved = store.record_promotion_event(
+        blocked.model_copy(
+            update={
+                "decision": PromotionDecision.APPROVED,
+                "criteria_snapshot": {"all_gates": True},
+                "reason": "all gates passed",
+            }
+        )
+    )
+    assert approved.to_stage is ResearchStage.CANDIDATE
+    assert store.record_promotion_event(approved.to_spec()).promotion_id == approved.promotion_id
+    with pytest.raises(InvalidResearchTransition, match="expected CANDIDATE"):
+        store.record_promotion_event(
+            blocked.model_copy(
+                update={
+                    "decision": PromotionDecision.REJECTED,
+                    "to_stage": ResearchStage.REJECTED,
+                    "reason": "stale from-stage",
+                }
+            )
+        )

@@ -8,6 +8,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, cast
 
+import numpy as np
 import orjson
 import polars as pl
 
@@ -25,6 +26,19 @@ class CampaignComparisonResult:
     trial_count: int
     succeeded_count: int
     failed_count: int
+
+
+def _distribution(values: list[float]) -> dict[str, float]:
+    if not values:
+        return {}
+    array = np.asarray(values, dtype=np.float64)
+    return {
+        "minimum": float(np.min(array)),
+        "p25": float(np.quantile(array, 0.25)),
+        "median": float(np.median(array)),
+        "p75": float(np.quantile(array, 0.75)),
+        "maximum": float(np.max(array)),
+    }
 
 
 def _atomic_replace_bytes(path: Path, payload: bytes) -> None:
@@ -83,6 +97,17 @@ def build_campaign_comparison(store: ResearchStore, campaign: CampaignRecord) ->
             if succeeded is not None
             else {}
         )
+        fold_returns = (
+            [
+                metric.metric_value
+                for metric in store.list_metrics(succeeded.run_id)
+                if metric.scope is MetricScope.TEST
+                and metric.fold is not None
+                and metric.metric_name == "total_return"
+            ]
+            if succeeded is not None
+            else []
+        )
         rows.append(
             {
                 "ordinal": ordinal,
@@ -104,7 +129,15 @@ def build_campaign_comparison(store: ResearchStore, campaign: CampaignRecord) ->
                     if metrics
                     else None
                 ),
+                "gross_return": (
+                    metrics.get("price_pnl", 0.0) + metrics.get("funding_pnl", 0.0)
+                    if metrics
+                    else None
+                ),
                 "rank_ic": metrics.get("mean_cross_sectional_rank_ic"),
+                "worst_fold_return": min(fold_returns) if fold_returns else None,
+                "profitable_folds": sum(value > 0 for value in fold_returns),
+                "fold_count": len(fold_returns),
                 "cost_1_5x_return": stress.get(("cost_1_5x", "total_return")),
                 "delay_1_bar_return": stress.get(("signal_delay_1_bar", "total_return")),
                 "status": latest.status.value if latest is not None else "NOT_RUN",
@@ -148,6 +181,9 @@ def write_campaign_comparison(
         "trial_count": frame.height,
         "succeeded_count": succeeded,
         "failed_count": failed,
+        "planning": orjson.loads(campaign.spec_json).get("planning", {}),
+        "sharpe_distribution": _distribution(frame["sharpe"].drop_nulls().to_list()),
+        "return_distribution": _distribution(frame["total_return"].drop_nulls().to_list()),
         "trials": frame.to_dicts(),
     }
     _atomic_replace_parquet(comparison_path, frame, compression=compression)
@@ -164,17 +200,18 @@ def write_campaign_comparison(
         "",
         "> Every valid trial is preserved. The highest Sharpe is not independent OOS evidence.",
         "",
-        "| Rank | Experiment | Return | Sharpe | Turnover | Status |",
-        "|---:|---|---:|---:|---:|---|",
+        "| Rank | Experiment | Return | Sharpe | Worst fold | Cost 1.5x | Status |",
+        "|---:|---|---:|---:|---:|---:|---|",
     ]
     for row in frame.to_dicts():
         rank = "-" if row["rank"] is None else str(row["rank"])
         total_return = "-" if row["total_return"] is None else f"{row['total_return']:.4%}"
         sharpe = "-" if row["sharpe"] is None else f"{row['sharpe']:.3f}"
-        turnover = "-" if row["turnover"] is None else f"{row['turnover']:.3f}"
+        worst_fold = "-" if row["worst_fold_return"] is None else f"{row['worst_fold_return']:.4%}"
+        cost_stress = "-" if row["cost_1_5x_return"] is None else f"{row['cost_1_5x_return']:.4%}"
         lines.append(
             f"| {rank} | `{str(row['experiment_id'])[:16]}` | {total_return} | "
-            f"{sharpe} | {turnover} | {row['status']} |"
+            f"{sharpe} | {worst_fold} | {cost_stress} | {row['status']} |"
         )
     _atomic_replace_bytes(report_markdown_path, ("\n".join(lines) + "\n").encode())
     return CampaignComparisonResult(

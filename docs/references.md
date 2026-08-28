@@ -14,6 +14,8 @@ Consultadas em 2026-08-28.
 - [Subscribe/unsubscribe em streams](https://developers.binance.com/en/docs/products/derivatives-trading-usds-futures/websocket-market-streams/Live-Subscribing-Unsubscribing-to-streams)
 - [Binance Public Data](https://github.com/binance/binance-public-data)
 - [Binance Data Collection](https://data.binance.vision/)
+- [The Deflated Sharpe Ratio — Bailey and López de Prado](https://www.davidhbailey.com/dhbpapers/deflated-sharpe.pdf)
+- [The Probability of Backtest Overfitting — Bailey, Borwein, López de Prado and Zhu](https://escholarship.org/uc/item/4w1110bb)
 
 Os três endpoints usados neste marco são públicos e têm request weight 1 conforme as páginas
 específicas. A página de Exchange Information marca seu `serverTime` como ignorável e direciona
@@ -35,3 +37,7 @@ usa o arquivo daily de 2026-08-25.
 O endpoint público de funding foi revisado em 2026-08-28. Ele aceita símbolo, range inclusivo e
 até 1.000 itens; o retorno cronológico contém `fundingRate`, `fundingTime`, mark price e tipo. A
 ingestão usa o host público de produção apenas para dados, sem API key ou endpoints de ordem.
+
+As fontes primárias de DSR e PBO/CSCV foram consultadas na Fase 3.5. O código documenta os inputs,
+usa o número explícito de trials no DSR e só calcula PBO quando a estrutura comparável mínima está
+presente; ausência desses pressupostos é um estado reportado, não zero.

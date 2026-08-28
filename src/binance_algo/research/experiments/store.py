@@ -26,6 +26,7 @@ from binance_algo.research.experiments.migrations import (
 )
 from binance_algo.research.experiments.models import (
     CampaignStatus,
+    CodeFingerprint,
     ExperimentSpec,
     FeatureDecision,
     FeatureEvaluationSpec,
@@ -33,6 +34,9 @@ from binance_algo.research.experiments.models import (
     HypothesisSpec,
     HypothesisStatus,
     MetricScope,
+    PromotionDecision,
+    PromotionEventSpec,
+    ResearchStage,
     RunStatus,
 )
 from binance_algo.research.features.base import FeatureDefinition
@@ -82,6 +86,21 @@ CAMPAIGN_TRANSITIONS: dict[CampaignStatus, frozenset[CampaignStatus]] = {
     CampaignStatus.COMPLETED: frozenset(),
     CampaignStatus.FAILED: frozenset(),
     CampaignStatus.CANCELLED: frozenset(),
+}
+
+PROMOTION_TRANSITIONS: dict[ResearchStage, frozenset[ResearchStage]] = {
+    ResearchStage.DISCOVERY: frozenset(
+        {ResearchStage.CANDIDATE, ResearchStage.REJECTED, ResearchStage.INVALIDATED}
+    ),
+    ResearchStage.CANDIDATE: frozenset(
+        {ResearchStage.LOCKBOX_EVALUATED, ResearchStage.REJECTED, ResearchStage.INVALIDATED}
+    ),
+    ResearchStage.LOCKBOX_EVALUATED: frozenset(
+        {ResearchStage.PHASE4_CANDIDATE, ResearchStage.REJECTED, ResearchStage.INVALIDATED}
+    ),
+    ResearchStage.PHASE4_CANDIDATE: frozenset({ResearchStage.INVALIDATED}),
+    ResearchStage.REJECTED: frozenset({ResearchStage.INVALIDATED}),
+    ResearchStage.INVALIDATED: frozenset(),
 }
 
 
@@ -182,6 +201,30 @@ class FeatureEvaluationRecord:
             decision=self.decision,
             decision_reason=self.decision_reason,
             context=dict(self.context),
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class PromotionRecord:
+    promotion_id: str
+    experiment_id: str
+    from_stage: ResearchStage
+    to_stage: ResearchStage
+    decision: PromotionDecision
+    criteria_snapshot: Mapping[str, Any]
+    reason: str
+    created_at_ms: int
+    code_fingerprint: CodeFingerprint
+
+    def to_spec(self) -> PromotionEventSpec:
+        return PromotionEventSpec(
+            experiment_id=self.experiment_id,
+            from_stage=self.from_stage,
+            to_stage=self.to_stage,
+            decision=self.decision,
+            criteria_snapshot=dict(self.criteria_snapshot),
+            reason=self.reason,
+            code_fingerprint=self.code_fingerprint,
         )
 
 
@@ -1449,6 +1492,142 @@ class ResearchStore:
             ) from exc
         return row is not None
 
+    def record_promotion_event(self, spec: PromotionEventSpec) -> PromotionRecord:
+        identifier = canonical_sha256(spec.model_dump(mode="python"))
+        criteria_json = canonical_json_text(spec.criteria_snapshot)
+        fingerprint_json = canonical_json_text(spec.code_fingerprint)
+        try:
+            with self.transaction() as connection:
+                experiment = connection.execute(
+                    "SELECT 1 FROM research_experiments WHERE experiment_id = ?",
+                    (spec.experiment_id,),
+                ).fetchone()
+                if experiment is None:
+                    raise ResearchStoreError(
+                        f"promotion references an unknown experiment: {spec.experiment_id}"
+                    )
+                prior = connection.execute(
+                    """
+                    SELECT from_stage, to_stage, decision FROM research_promotions
+                    WHERE experiment_id = ? ORDER BY created_at_ms, rowid
+                    """,
+                    (spec.experiment_id,),
+                ).fetchall()
+                current_stage = ResearchStage.DISCOVERY
+                for event in prior:
+                    if ResearchStage(str(event["from_stage"])) is not current_stage:
+                        raise ResearchStoreError("stored promotion history is inconsistent")
+                    if PromotionDecision(str(event["decision"])) is not PromotionDecision.BLOCKED:
+                        current_stage = ResearchStage(str(event["to_stage"]))
+                if spec.from_stage is not current_stage:
+                    existing = connection.execute(
+                        "SELECT * FROM research_promotions WHERE promotion_id = ?",
+                        (identifier,),
+                    ).fetchone()
+                    if existing is not None:
+                        record = self._promotion_from_row(existing)
+                        if record.to_spec() != spec:
+                            raise ResearchStoreError(f"immutable promotion conflict: {identifier}")
+                        return record
+                    raise InvalidResearchTransition(
+                        f"promotion event expected {current_stage.value}, "
+                        f"got {spec.from_stage.value}"
+                    )
+                if (
+                    spec.decision is not PromotionDecision.BLOCKED
+                    and spec.to_stage not in PROMOTION_TRANSITIONS[current_stage]
+                ):
+                    raise InvalidResearchTransition(
+                        f"invalid promotion transition {current_stage.value} -> "
+                        f"{spec.to_stage.value}"
+                    )
+                if (
+                    spec.decision is PromotionDecision.REJECTED
+                    and spec.to_stage is not ResearchStage.REJECTED
+                ) or (
+                    spec.decision is PromotionDecision.INVALIDATED
+                    and spec.to_stage is not ResearchStage.INVALIDATED
+                ):
+                    raise InvalidResearchTransition(
+                        "promotion decision and destination stage are inconsistent"
+                    )
+                connection.execute(
+                    """
+                    INSERT OR IGNORE INTO research_promotions(
+                        promotion_id, experiment_id, from_stage, to_stage,
+                        decision, criteria_snapshot_json, reason,
+                        created_at_ms, code_fingerprint_json
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        identifier,
+                        spec.experiment_id,
+                        spec.from_stage.value,
+                        spec.to_stage.value,
+                        spec.decision.value,
+                        criteria_json,
+                        spec.reason,
+                        now_ms(),
+                        fingerprint_json,
+                    ),
+                )
+                row = connection.execute(
+                    "SELECT * FROM research_promotions WHERE promotion_id = ?",
+                    (identifier,),
+                ).fetchone()
+        except (ResearchStoreError, InvalidResearchTransition):
+            raise
+        except sqlite3.Error as exc:
+            raise ResearchStoreError(f"cannot record promotion event: {exc}") from exc
+        if row is None:
+            raise ResearchStoreError(f"registered promotion disappeared: {identifier}")
+        record = self._promotion_from_row(row)
+        if record.to_spec() != spec:
+            raise ResearchStoreError(f"immutable promotion conflict: {identifier}")
+        return record
+
+    def list_promotions(self, experiment_id: str) -> tuple[PromotionRecord, ...]:
+        try:
+            with closing(self._connect()) as connection:
+                exists = connection.execute(
+                    "SELECT 1 FROM research_experiments WHERE experiment_id = ?",
+                    (experiment_id,),
+                ).fetchone()
+                if exists is None:
+                    raise ResearchStoreError(f"unknown experiment: {experiment_id}")
+                rows = connection.execute(
+                    """
+                    SELECT * FROM research_promotions
+                    WHERE experiment_id = ?
+                    ORDER BY created_at_ms, rowid
+                    """,
+                    (experiment_id,),
+                ).fetchall()
+        except ResearchStoreError:
+            raise
+        except sqlite3.Error as exc:
+            raise ResearchStoreError(f"cannot list promotion events: {exc}") from exc
+        return tuple(self._promotion_from_row(row) for row in rows)
+
+    def campaigns_for_experiment(self, experiment_id: str) -> tuple[CampaignRecord, ...]:
+        try:
+            with closing(self._connect()) as connection:
+                rows = connection.execute(
+                    """
+                    SELECT c.*
+                    FROM research_campaign_experiments AS ce
+                    JOIN research_campaigns AS c ON c.campaign_id = ce.campaign_id
+                    WHERE ce.experiment_id = ?
+                    ORDER BY c.created_at_ms, c.campaign_id
+                    """,
+                    (experiment_id,),
+                ).fetchall()
+        except sqlite3.Error as exc:
+            raise ResearchStoreError(
+                f"cannot list campaigns for experiment {experiment_id}: {exc}"
+            ) from exc
+        return tuple(self._campaign_from_row(row) for row in rows)
+
     def _connect(self) -> sqlite3.Connection:
         connection = sqlite3.connect(
             self.path,
@@ -1572,14 +1751,32 @@ class ResearchStore:
             created_at_ms=int(row["created_at_ms"]),
         )
 
+    @staticmethod
+    def _promotion_from_row(row: sqlite3.Row) -> PromotionRecord:
+        return PromotionRecord(
+            promotion_id=str(row["promotion_id"]),
+            experiment_id=str(row["experiment_id"]),
+            from_stage=ResearchStage(str(row["from_stage"])),
+            to_stage=ResearchStage(str(row["to_stage"])),
+            decision=PromotionDecision(str(row["decision"])),
+            criteria_snapshot=orjson.loads(str(row["criteria_snapshot_json"])),
+            reason=str(row["reason"]),
+            created_at_ms=int(row["created_at_ms"]),
+            code_fingerprint=CodeFingerprint.model_validate(
+                orjson.loads(str(row["code_fingerprint_json"]))
+            ),
+        )
+
 
 __all__ = [
     "CAMPAIGN_TRANSITIONS",
     "HYPOTHESIS_TRANSITIONS",
+    "PROMOTION_TRANSITIONS",
     "RUN_TRANSITIONS",
     "CampaignRecord",
     "ExperimentRunRecord",
     "FeatureEvaluationRecord",
+    "PromotionRecord",
     "ResearchArtifactRecord",
     "ResearchMetricRecord",
     "ResearchRegistryStatus",

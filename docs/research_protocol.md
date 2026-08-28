@@ -69,3 +69,13 @@ sempre interpretados como `com feature - sem feature`, mesmo em remove-one, e in
 Sharpe, drawdown, rank IC, turnover, custos explícitos, capacidade e concentração mensal. A regra
 automática e qualquer override ficam registrados com motivo. Uma rejeição é contextual: não
 desativa a feature globalmente e não pode ser apagada do histórico.
+
+Antes de `CANDIDATE`, gere o relatório robusto da campanha inteira. O melhor ponto precisa ser
+avaliado contra folds, regimes, meses, símbolos, custos 1,5×, atraso e parâmetros vizinhos. DSR
+usa todos os Sharpes comparáveis e as características dos retornos do selecionado. PBO só é
+interpretado quando o desenho CSCV mínimo está presente; `NOT_APPLICABLE` não equivale a aprovação
+nem reprovação.
+
+Promoção exige proveniência Git limpa tanto no experimento quanto no código que toma a decisão.
+O histórico atual é development OOS, não lockbox. Sem manifest/período independente, o gate
+registra `NOT_AVAILABLE` e `PHASE4_CANDIDATE` permanece impossível.

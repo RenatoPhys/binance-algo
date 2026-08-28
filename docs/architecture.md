@@ -186,3 +186,21 @@ campaign baseline/candidate -> verified successful runs -> with-minus-without de
 O registry retém cada métrica e motivo, inclusive rejeições. O cálculo de ablação valida o
 artifact mensal e recusa pares que diferem fora dos parâmetros da strategy. Relatórios podem ser
 sobrescritos porque são views; avaliações e runs não podem.
+
+O PR 8 transforma resultados segmentados em gates auditáveis:
+
+```text
+all campaign trials + verified segmented artifacts
+                    |
+                    +-> distributions + parameter neighborhood
+                    +-> DSR(trial count, skew, kurtosis)
+                    +-> PBO or explicit NOT_APPLICABLE
+                    +-> lockbox availability
+                                      |
+                                      v
+                         candidate report + promotion event
+```
+
+Eventos `BLOCKED` não movem o estágio; `APPROVED`, `REJECTED` e `INVALIDATED` seguem transições
+explícitas. O experimento nunca é reescrito. A Fase 4 só poderá consumir o ID completo de um
+`PHASE4_CANDIDATE` após lockbox independente.
