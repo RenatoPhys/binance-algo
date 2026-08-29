@@ -1,0 +1,19 @@
+hypothesis_id: HYP-VOLBREAK-0001
+title: Volatility-compression breakout
+mechanism: >-
+  A breakout of the preceding 72-hour range is traded only after fold-frozen relative
+  volatility compression, non-negative volume expansion and efficient recent price travel.
+expected_direction: continuation through a prior 72-hour high or low after compression
+expected_horizon: 12 to 24 hours
+target_universe: fixed BTCUSDT, ETHUSDT and SOLUSDT development_seen universe
+preregistered_success_criteria:
+  wave1_gate: standalone_or_diversifier
+  maximum_trials: 4
+  reject_if_sol_only: true
+  reject_if_signal_delay_eliminates_return: true
+  promotion_allowed: false
+status: READY
+notes: >-
+  EXPLORATORY / DEVELOPMENT_SEEN — the historical window has already informed prior research
+  decisions and is not an independent lockbox. Breakout horizon, volume filter and minimum
+  efficiency are frozen.

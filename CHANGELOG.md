@@ -1,5 +1,16 @@
 # Changelog
 
+## Alpha Research Reboot — Wave 1
+
+- Added the causal `alpha_reboot_features:v1` set, four preregistered strategy families and the
+  hedge-preserving pair-spread portfolio policy.
+- Added summary-level trade events, trade distributions, daily positions, and pair fit/P&L
+  diagnostics without changing legacy baseline artifacts.
+- Added a strict 18-trial consolidated report with explicit champion `run_id`, DSR, standalone and
+  diversification gates, immutable negative results, and `DEVELOPMENT_SEEN` banners.
+- Wave 1 found no standalone or diversifier pass; further technical-signal ensembles remain
+  blocked in favor of premium/aggTrades data and structural relative-value research.
+
 ## Unreleased — MVP de exploração de estratégias
 
 - Dashboard schema v2 para portfólios de estratégias declarados, preservando catálogo, falhas e

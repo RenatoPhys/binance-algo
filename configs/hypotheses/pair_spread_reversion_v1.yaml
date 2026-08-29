@@ -1,0 +1,18 @@
+hypothesis_id: HYP-PAIRREV-0001
+title: Fold-frozen pair-spread mean reversion
+mechanism: >-
+  Explicit ETH/BTC and SOL/BTC log-price spreads converge after fold-local OLS hedge ratios,
+  residual normalization and half-life eligibility are fitted exclusively on training rows.
+expected_direction: convergence of an over- or under-valued altcoin leg against hedged BTC
+expected_horizon: up to 96 hours with an absolute spread-z exit at 0.5
+target_universe: fixed ETHUSDT/BTCUSDT and SOLUSDT/BTCUSDT pairs in development_seen data
+preregistered_success_criteria:
+  wave1_gate: standalone_or_diversifier
+  maximum_trials: 4
+  hedge_fit_hours: 720
+  maximum_hold_hours: 96
+  promotion_allowed: false
+status: READY
+notes: >-
+  EXPLORATORY / DEVELOPMENT_SEEN — the historical window has already informed prior research
+  decisions and is not an independent lockbox. Hedge ratios never update inside test folds.

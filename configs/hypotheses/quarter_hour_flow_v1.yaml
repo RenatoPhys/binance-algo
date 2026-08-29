@@ -1,0 +1,21 @@
+hypothesis_id: HYP-QHOF-0001
+title: Quarter-hour opening-flow continuation
+mechanism: >-
+  Aggressive order flow in fully closed UTC minutes 00, 15, 30 and 45 persists for several
+  hours after controlling for signed flow in the other 56 minutes of the hour.
+expected_direction: continuation in the direction of quarter-hour excess aggressive flow
+expected_horizon: 4 to 12 hours
+target_universe: fixed BTCUSDT, ETHUSDT and SOLUSDT development_seen universe
+preregistered_success_criteria:
+  wave1_gate: standalone_or_diversifier
+  maximum_trials: 6
+  reject_if_cost_1_5x_negative: true
+  reject_if_signal_delay_changes_sign: true
+  maximum_symbol_pnl_concentration: "0.60"
+  maximum_positive_quarter_concentration: "0.40"
+  promotion_allowed: false
+status: READY
+notes: >-
+  EXPLORATORY / DEVELOPMENT_SEEN — the historical window has already informed prior research
+  decisions and is not an independent lockbox. Only aggregation_hours=[1,2] crossed with
+  hold_hours=[4,8,12] is permitted in v1.

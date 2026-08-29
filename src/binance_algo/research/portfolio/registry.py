@@ -27,6 +27,10 @@ from binance_algo.research.portfolio.neutral_long_short import (
     NeutralLongShortParameters,
     NeutralLongShortPolicy,
 )
+from binance_algo.research.portfolio.pair_spread import (
+    BufferedPairSpreadParameters,
+    BufferedPairSpreadPolicy,
+)
 from binance_algo.research.portfolio.three_sleeve_neutral import (
     BufferedThreeSleeveNeutralParameters,
     BufferedThreeSleeveNeutralPolicy,
@@ -104,7 +108,26 @@ class BufferedThreeSleeveNeutralSpec(BaseModel):
     max_symbol_weight: float = Field(gt=0, le=1)
 
 
+class BufferedPairSpreadSpec(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    gross_exposure: float = Field(gt=0, le=1)
+    annual_volatility_target: float = Field(gt=0, le=1)
+    max_symbol_weight: float = Field(gt=0, le=1)
+    maximum_active_pairs: int = Field(ge=1, le=2)
+
+
 PortfolioPolicyFactory = Callable[[Mapping[str, Any]], PortfolioPolicy]
+
+
+def build_buffered_pair_spread(parameters: Mapping[str, Any]) -> BufferedPairSpreadPolicy:
+    try:
+        parsed = BufferedPairSpreadSpec.model_validate(dict(parameters))
+        return BufferedPairSpreadPolicy(
+            parameters=BufferedPairSpreadParameters(**parsed.model_dump())
+        )
+    except (TypeError, ValueError, ResearchError) as exc:
+        raise ResearchError(f"invalid buffered_pair_spread parameters: {exc}") from exc
 
 
 def build_neutral_long_short(parameters: Mapping[str, Any]) -> NeutralLongShortPolicy:
@@ -182,6 +205,8 @@ def build_buffered_three_sleeve_neutral(
 
 
 PORTFOLIO_POLICY_FACTORIES: dict[tuple[str, str], PortfolioPolicyFactory] = {
+    ("buffered_pair_spread", "1"): build_buffered_pair_spread,
+    ("buffered_pair_spread", "v1"): build_buffered_pair_spread,
     ("buffered_carry_regime", "1"): build_buffered_carry_regime,
     ("buffered_carry_regime", "v1"): build_buffered_carry_regime,
     ("buffered_directional", "1"): build_buffered_directional,
@@ -217,6 +242,7 @@ __all__ = [
     "BufferedDirectionalSpec",
     "BufferedLongFlatSpec",
     "BufferedNeutralLongShortSpec",
+    "BufferedPairSpreadSpec",
     "BufferedThreeSleeveNeutralSpec",
     "BufferedTwoSleeveNeutralSpec",
     "NeutralLongShortSpec",
@@ -225,6 +251,7 @@ __all__ = [
     "build_buffered_directional",
     "build_buffered_long_flat",
     "build_buffered_neutral_long_short",
+    "build_buffered_pair_spread",
     "build_buffered_three_sleeve_neutral",
     "build_buffered_two_sleeve_neutral",
     "build_neutral_long_short",

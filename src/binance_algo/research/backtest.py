@@ -45,6 +45,23 @@ ACCOUNTING_METADATA_FIELDS = (
 ACCOUNTING_FIELDS = ("rolling_beta", *ACCOUNTING_OUTCOME_FIELDS, *ACCOUNTING_METADATA_FIELDS)
 
 
+def funding_pnl_contributions(
+    weights: np.ndarray[Any, np.dtype[np.float64]],
+    funding_rates: np.ndarray[Any, np.dtype[np.float64]],
+) -> np.ndarray[Any, np.dtype[np.float64]]:
+    """Apply Binance funding sign convention: positive rates are paid by long positions."""
+
+    weight_values = np.asarray(weights, dtype=np.float64)
+    rate_values = np.asarray(funding_rates, dtype=np.float64)
+    if (
+        weight_values.shape != rate_values.shape
+        or np.any(~np.isfinite(weight_values))
+        or np.any(~np.isfinite(rate_values))
+    ):
+        raise ResearchError("funding weights and rates must be finite with matching shapes")
+    return -weight_values * rate_values
+
+
 def accounting_feature_columns(feature_columns: tuple[str, ...]) -> tuple[str, ...]:
     """Include analytical fields required by accounting regardless of strategy policy."""
 
@@ -300,10 +317,44 @@ def _run_fold(
         times=times,
         role="portfolio target weights",
     )
+    score_extra_names = tuple(
+        sorted(set(score_frame.columns).difference((*FEATURE_KEY_COLUMNS, "score")))
+    )
+    score_extra_arrays = {
+        name: _long_value_matrix(
+            score_frame,
+            value_column=name,
+            symbols=symbols,
+            times=times,
+            role=f"strategy score diagnostic {name}",
+        )
+        for name in score_extra_names
+    }
+    target_extra_names = tuple(
+        sorted(
+            name
+            for name in target_weight_frame.columns
+            if name not in (*FEATURE_KEY_COLUMNS, "target_weight")
+        )
+    )
+    target_extra_arrays = {
+        name: _long_value_matrix(
+            target_weight_frame,
+            value_column=name,
+            symbols=symbols,
+            times=times,
+            role=f"portfolio target diagnostic {name}",
+        )
+        for name in target_extra_names
+    }
     if signal_delay_bars:
         delayed = np.zeros_like(targets)
         delayed[signal_delay_bars:] = targets[:-signal_delay_bars]
         targets = delayed
+        for name, values in target_extra_arrays.items():
+            delayed_extra = np.zeros_like(values)
+            delayed_extra[signal_delay_bars:] = values[:-signal_delay_bars]
+            target_extra_arrays[name] = delayed_extra
     previous = np.zeros(len(symbols), dtype=np.float64)
     equity = 1.0
     output: list[dict[str, object]] = []
@@ -331,7 +382,9 @@ def _run_fold(
             trades = trades + np.abs(weights)
         turnover = float(np.sum(trades))
         price_contributions = weights * arrays["future_return_1h"][period]
-        funding_contributions = -weights * arrays["outcome_funding_rate_1h"][period]
+        funding_contributions = funding_pnl_contributions(
+            weights, arrays["outcome_funding_rate_1h"][period]
+        )
         allocated_fees = trades * cost_rates.fee_rate
         allocated_spread = trades * cost_rates.half_spread_rate
         allocated_slippage = trades * cost_rates.slippage_rate
@@ -343,7 +396,7 @@ def _run_fold(
         spread_matrix[period] = allocated_spread
         slippage_matrix[period] = allocated_slippage
         price_pnl = float(np.dot(weights, arrays["future_return_1h"][period]))
-        funding_pnl = float(-np.dot(weights, arrays["outcome_funding_rate_1h"][period]))
+        funding_pnl = float(np.sum(funding_contributions))
         trading_fees = turnover * cost_rates.fee_rate
         spread_cost = turnover * cost_rates.half_spread_rate
         slippage_cost = turnover * cost_rates.slippage_rate
@@ -401,6 +454,9 @@ def _run_fold(
     repeated_execution_times = np.repeat(
         np.asarray(arrays["execution_time_ms"][:, 0], dtype=np.int64), len(symbols)
     )
+    repeated_label_end_times = np.repeat(
+        np.asarray(arrays["label_end_time_ms"][:, 0], dtype=np.int64), len(symbols)
+    )
     explicit_cost_matrix = fee_matrix + spread_matrix + slippage_matrix
     gross_contribution_matrix = price_contribution_matrix + funding_contribution_matrix
     score_output = pl.DataFrame(
@@ -412,11 +468,36 @@ def _run_fold(
             "score_rank": score_rank_matrix.reshape(-1),
         }
     )
+    diagnostic_feature_names = tuple(
+        sorted(name for name in strategy.required_features() if name not in ACCOUNTING_FIELDS)
+    )
+    if panel_data is None:
+        diagnostic_panel = PanelData.from_frame(
+            test,
+            feature_columns=diagnostic_feature_names,
+        )
+        diagnostic_feature_arrays = {
+            name: np.asarray(diagnostic_panel.features[name], dtype=np.float64)
+            for name in diagnostic_feature_names
+        }
+    else:
+        diagnostic_feature_arrays = {
+            name: np.asarray(
+                panel_data.matrix(
+                    name,
+                    start_ms=context.test_start_ms,
+                    end_ms=context.test_end_ms,
+                ),
+                dtype=np.float64,
+            )
+            for name in diagnostic_feature_names
+        }
     position_output = pl.DataFrame(
         {
             "fold": np.full(targets.size, context.fold, dtype=np.int64),
             "decision_time_ms": repeated_times,
             "execution_time_ms": repeated_execution_times,
+            "label_end_time_ms": repeated_label_end_times,
             "symbol": tiled_symbols,
             "previous_weight": previous_weights.reshape(-1),
             "target_weight": targets.reshape(-1),
@@ -431,6 +512,12 @@ def _run_fold(
             "allocated_fee": fee_matrix.reshape(-1),
             "allocated_spread_cost": spread_matrix.reshape(-1),
             "allocated_slippage_cost": slippage_matrix.reshape(-1),
+            **{
+                f"score_diagnostic_{name}": values.reshape(-1)
+                for name, values in score_extra_arrays.items()
+            },
+            **{name: values.reshape(-1) for name, values in target_extra_arrays.items()},
+            **{name: values.reshape(-1) for name, values in diagnostic_feature_arrays.items()},
         }
     )
     return _FoldBacktestRun(

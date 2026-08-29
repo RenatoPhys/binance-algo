@@ -22,9 +22,38 @@ from binance_algo.research.experiments.store import (
     ResearchArtifactRecord,
     ResearchMetricRecord,
 )
+from binance_algo.research.trades import (
+    build_trade_metrics,
+    daily_positions,
+    pair_diagnostics,
+    reconstruct_trade_events,
+)
 from binance_algo.research.visualization import render_pnl_svg
 
-ARTIFACT_SCHEMA_VERSION = 1
+ARTIFACT_SCHEMA_VERSION = 2
+DEVELOPMENT_SEEN_BANNER = (
+    "EXPLORATORY / DEVELOPMENT_SEEN — the historical window has already informed prior "
+    "research decisions and is not an independent lockbox."
+)
+LEGACY_FULL_POSITION_COLUMNS = (
+    "fold",
+    "decision_time_ms",
+    "execution_time_ms",
+    "symbol",
+    "previous_weight",
+    "target_weight",
+    "trade_weight",
+    "gross_contribution",
+    "net_contribution",
+    "beta_contribution",
+    "future_return",
+    "funding_rate",
+    "price_pnl",
+    "funding_pnl",
+    "allocated_fee",
+    "allocated_spread_cost",
+    "allocated_slippage_cost",
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -130,13 +159,23 @@ def build_metrics_payload(
     *,
     stress: Mapping[str, Mapping[str, float | int]],
     bootstrap: Mapping[str, float | int],
+    strategy_id: str = "unknown_strategy",
 ) -> tuple[dict[str, Any], dict[str, pl.DataFrame]]:
+    trade_events = reconstruct_trade_events(run.positions, strategy_id=strategy_id)
+    trade_metrics = build_trade_metrics(trade_events, run.positions)
+    pair_fit_metrics, pair_pnl_metrics = pair_diagnostics(run.positions)
     frames = {
         "fold_metrics": _fold_metrics(run),
         "regime_metrics": _regime_metrics(run),
         "monthly_metrics": _monthly_metrics(run),
         "symbol_metrics": _symbol_metrics(run),
+        "trade_events": trade_events,
+        "trade_metrics": trade_metrics,
+        "daily_positions": daily_positions(run.positions),
     }
+    if not pair_fit_metrics.is_empty():
+        frames["pair_fit_metrics"] = pair_fit_metrics
+        frames["pair_pnl_metrics"] = pair_pnl_metrics
     payload: dict[str, Any] = {
         "metrics": asdict(run.metrics),
         "folds": [asdict(fold) for fold in run.folds],
@@ -197,6 +236,7 @@ def experiment_report_markdown(
     experiment_id: str,
     run: BacktestRun,
     stress: Mapping[str, Mapping[str, float | int]],
+    development_seen: bool = False,
 ) -> str:
     metrics = run.metrics
     lines = [
@@ -204,6 +244,7 @@ def experiment_report_markdown(
         "",
         f"Experiment: `{experiment_id}`",
         "",
+        *([f"> {DEVELOPMENT_SEEN_BANNER}", ""] if development_seen else []),
         "> Offline vectorized screening result; this is not authorization to trade.",
         "",
         "## Out-of-sample summary",
@@ -276,7 +317,11 @@ class ExperimentArtifactPipeline:
                 run,
                 stress=stress,
                 bootstrap=bootstrap,
+                strategy_id=spec.strategy.component_id,
             )
+            development_seen = spec.feature_set.feature_set_id == "alpha_reboot_features:v1"
+            if development_seen:
+                metrics_payload["research_banner"] = DEVELOPMENT_SEEN_BANNER
             json_files: dict[str, object] = {
                 "experiment_spec.json": spec.model_dump(mode="json"),
                 "metrics.json": metrics_payload,
@@ -292,6 +337,7 @@ class ExperimentArtifactPipeline:
                     experiment_id=experiment_id,
                     run=run,
                     stress=stress,
+                    development_seen=development_seen,
                 ).encode("utf-8"),
             )
             parquet_frames = {
@@ -302,7 +348,7 @@ class ExperimentArtifactPipeline:
                 parquet_frames.update(
                     {
                         "scores.parquet": run.scores,
-                        "positions.parquet": run.positions,
+                        "positions.parquet": run.positions.select(LEGACY_FULL_POSITION_COLUMNS),
                     }
                 )
             for name, frame in parquet_frames.items():
@@ -460,6 +506,7 @@ def verify_run_artifacts(
 
 __all__ = [
     "ARTIFACT_SCHEMA_VERSION",
+    "DEVELOPMENT_SEEN_BANNER",
     "ArtifactBundle",
     "ArtifactVerification",
     "ExperimentArtifactPipeline",

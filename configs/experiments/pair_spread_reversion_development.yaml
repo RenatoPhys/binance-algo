@@ -1,0 +1,63 @@
+campaign:
+  name: pair_spread_reversion_v1_development_seen
+  description: Preregistered Wave 1 screen of fold-frozen ETH/BTC and SOL/BTC convergence.
+  hypothesis_id: HYP-PAIRREV-0001
+  artifact_policy: summary
+  max_trials: 4
+
+dataset:
+  manifest: var/data/gold/binance/usdm/research_dataset/version=2ba898995a175ca3/dataset.json
+
+feature_set:
+  name: alpha_reboot_features
+  version: "1"
+
+label:
+  name: gross_forward_return_1h
+  version: "1"
+  horizon_minutes: 60
+
+strategy:
+  name: pair_spread_reversion
+  version: "1"
+  fixed: {}
+  grid:
+    spread_z_window_hours: [168, 336]
+    entry_z: [1.5, 2.0]
+
+portfolio:
+  name: buffered_pair_spread
+  version: "1"
+  fixed:
+    gross_exposure: 0.35
+    annual_volatility_target: 0.10
+    max_symbol_weight: 0.20
+    maximum_active_pairs: 2
+  grid: {}
+
+execution:
+  name: bar_next_open
+  version: "1"
+  fixed: {}
+
+costs:
+  name: configured_taker
+  version: "1"
+  fixed:
+    cost_multiplier: 1.0
+
+validation:
+  profile: full
+  split_plan: expanding_walk_forward_v1
+  train_days: 365
+  test_days: 14
+  embargo_bars: 1
+  stress_cost_multipliers: [1.5, 2.0]
+  stress_signal_delay_bars: [1]
+  bootstrap_samples: 500
+  bootstrap_block_hours: 24
+
+runner:
+  max_workers: 3
+  fail_fast: false
+  resume: true
