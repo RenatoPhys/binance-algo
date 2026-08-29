@@ -1,0 +1,26 @@
+hypothesis_id: HYP-MULTI-HORIZON-TREND-LONG-FLAT-0001
+title: Slow multi-horizon trend voting may capture crypto upside while avoiding short squeezes
+mechanism: >-
+  A convex vote of trailing 3-, 14- and 30-day returns should require agreement across trend
+  horizons before holding risk. Long/flat positioning avoids the unstable short leg observed in
+  prior directional SMA and Donchian screens, while 72-hour buffering limits turnover.
+expected_direction: positive net returns concentrated in persistent upward trends
+expected_horizon: 72-hour buffered positions with hourly mark-to-market
+target_universe: fixed point-in-time BTCUSDT, ETHUSDT and SOLUSDT research universe
+preregistered_success_criteria:
+  development_end: "2024-08-27"
+  development_net_total_return_min: "0.0"
+  development_net_sharpe_min: "0.50"
+  development_cost_1_5x_total_return_min: "0.0"
+  development_signal_delay_total_return_min: "0.0"
+  development_profitable_weight_variants_min: 3
+  final_oos_days: 728
+  final_net_total_return_min: "0.0"
+  final_net_sharpe_min: "0.30"
+  final_cost_1_5x_total_return_min: "0.0"
+  promotion_allowed: false
+status: READY
+notes: >-
+  The 72/336/720-hour horizons, four convex weight combinations, zero threshold and 72-hour
+  rebalance are frozen before development. At most one winner may be evaluated on the final
+  two-year development OOS, which is not an independent lockbox.

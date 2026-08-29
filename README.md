@@ -104,6 +104,51 @@ uv run binance-algo --config configs/research.yaml research dashboard build --op
 uv run python scripts/benchmark_campaign.py --trials 20 --workers 4
 ```
 
+### Estratégias carry diversificadas
+
+As families `carry_multi_horizon:v1` e `carry_dual_trend:v1` combinam três carteiras neutras
+construídas separadamente e rebalanceadas a cada 48 horas. A primeira usa carry mais força
+relativa de 7/14 dias; a segunda usa carry, força relativa de 7 dias e tendência SMA 12/168h.
+Ambas usam `buffered_three_sleeve_neutral:v1`, que exige pesos convexos somando exatamente um.
+
+As campanhas de desenvolvimento preservam seis pesos pré-registrados, e os arquivos
+`*_oos_2y_confirmation.yaml` congelam somente o vencedor antes dos 728 dias finais. Os resultados
+continuam sendo development OOS: não são lockbox, recomendação financeira nem autorização para
+ordens. A multi-horizon confirmou +12,24% líquido e Sharpe 1,027; a dual-trend confirmou +8,93% e
+Sharpe 0,774. Ambas permaneceram positivas com custos 2×, mas os candidate gates seguem
+bloqueados por proveniência/lockbox e, no caso multi-horizon, concentração por símbolo.
+
+### Trend following long/flat
+
+As families `multi_horizon_trend:v1` e `market_regime_trend:v1` usam somente retornos horários
+causais e a policy `buffered_long_flat:v1`, que transforma sinais negativos em caixa. O segundo
+mecanismo exige tendência positiva de 168h/720h no ativo e retorno médio de 720h positivo no
+universo fixo, mantendo as posições por 72 horas entre rebalanceamentos.
+
+Três hipóteses foram preservadas sem esconder falhas. O voto multi-horizon teve um vencedor de
+desenvolvimento com +18,46%, mas não alcançou o Sharpe mínimo pré-registrado. O Donchian long/flat
+fez +34,17% no desenvolvimento e falhou com -5,60% na confirmação. O filtro de regime teve 4/4
+variantes positivas no desenvolvimento e retornou +6,54% no trecho final, Sharpe 0,318, drawdown
+máximo de -21,63%, +5,06% sob custo 1,5×, +3,59% sob custo 2× e +7,70% com atraso de uma barra.
+Seu bootstrap foi positivo em 62,8% e o DSR final foi 0,673. Como os 728 dias finais já foram
+consultados por outras hipóteses, isso é evidência exploratória, não lockbox, recomendação
+financeira ou autorização para operar.
+
+### Rodada com requisito de Sharpe acima de 1
+
+Uma rodada posterior fixou Sharpe líquido mínimo de 1,00 antes de cada campanha. O
+`carry_multi_regime:v1` adicionou uma sleeve long/flat quase ortogonal ao carry e obteve Sharpe
+1,196 no desenvolvimento, mas caiu para 0,952 nos 728 dias finais. O consenso de força relativa
+rápida/lenta chegou a 0,987 e foi interrompido no desenvolvimento. Buffers de 72/96/168h tiveram
+Sharpe máximo 0,821. O model average fixo dos seis pesos originais atingiu 1,068 no desenvolvimento
+e 0,928 no período final.
+
+Assim, o único resultado que permanece acima de um no período final é o
+`carry_multi_horizon:v1` 60/30/10: +12,24% líquido, Sharpe 1,027, drawdown máximo -6,14% e retorno
+positivo sob custo 2×. Os quase-acertos não foram arredondados nem retestados com novos pesos no
+mesmo período. Isso limita mineração do holdout, mas não torna o resultado restante uma lockbox
+independente.
+
 Durante o recorder, consulte `http://127.0.0.1:9108/health/live`, `/health/ready` e `/metrics`.
 Use porta `0` para selecionar uma porta efêmera em testes. A Binance separa `bookTicker` na rota
 `public` e `aggTrade`, `markPrice` e `kline_1m` na rota `market`; o adapter constrói essas

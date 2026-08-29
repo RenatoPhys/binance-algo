@@ -58,8 +58,21 @@ política converte esses scores em pesos antes da contabilidade.
   tentativas, métricas e artefatos.
 - `ResidualMomentumStrategy`: implementação fixa versionada, com pesos imutáveis e sem calibração
   OOS.
+- `CarryMultiHorizonStrategy`/`CarryDualTrendStrategy`: três scores causais explícitos para carry,
+  força relativa e tendência, sem target supervisionado ou calibração OOS.
+- `MultiHorizonTrendStrategy`/`MarketRegimeTrendStrategy`: votos de retornos trailing e confirmação
+  pelo regime médio do universo, sem target supervisionado nem acesso a retornos futuros.
+- `CarryMultiRegimeStrategy`: preserva as três sleeves neutras e adiciona um score separado para
+  trend de regime; `CarryConsensusStrengthStrategy` zera o componente relativo quando horizontes
+  rápidos e lentos discordam.
 - `NeutralLongShortPolicy`: seleção de caudas, no-trade band, neutralização net/beta, volatility
   target, limite por símbolo e trava contra alavancagem econômica.
+- `BufferedThreeSleeveNeutralPolicy`: constrói cada sleeve neutral separadamente e aceita apenas
+  uma combinação convexa cujos pesos somam exatamente um.
+- `BufferedLongFlatPolicy`: converte somente scores positivos em exposição long inverse-vol,
+  respeitando gross, volatility target, limite por símbolo e intervalo fixo de rebalanceamento.
+- `BufferedCarryRegimePolicy`: combina convexamente o core neutro e a sleeve long/flat sem elevar
+  o gross máximo; sleeves opcionais sem dispersão produzem caixa, não caudas artificiais.
 - `PanelData`: arrays read-only separados em features, outcomes e metadata, mapa estável de
   símbolos e availability explícita para reutilização entre trials.
 - `WorkerDatasetCache`: LRU process-local que usa lazy Parquet scan e projeção exata das colunas
@@ -207,8 +220,8 @@ dataset/período independente e evento `LOCKBOX_EVALUATED` aprovado.
 
 ## Próximos incrementos
 
-1. pré-registrar screenings pequenos de momentum lento, funding carry e mean reversion residual;
-2. ampliar histórico e capturar metadata point-in-time para um universo dinâmico legítimo;
+1. ampliar histórico e capturar metadata point-in-time para um universo dinâmico legítimo;
+2. reduzir a concentração por símbolo sem recalibrar os 728 dias já observados;
 3. reservar uma lockbox independente antes de qualquer avaliação para Fase 4.
 
 Campanhas extensas continuam condicionadas aos guards, protocolo de pesquisa e gates de promoção;

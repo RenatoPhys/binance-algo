@@ -11,6 +11,30 @@
   dirigidos por `configs/feature_sets/phase3_baseline.yaml` sem alterar o golden baseline.
 - Strategies fixas `funding_carry:v1` e `residual_mean_reversion:v1`, com schemas estritos,
   hipóteses e campanhas pequenas de descoberta sem promoção automática.
+- Strategies `carry_multi_horizon:v1` e `carry_dual_trend:v1`, com carry e dois sleeves de
+  tendência causal construídos separadamente.
+- Policy `buffered_three_sleeve_neutral:v1`, pesos convexos estritos e combinação de target
+  weights depois da neutralização/risk scaling de cada sleeve.
+- Duas grades pré-registradas de seis pesos, confirmações congeladas nos 728 dias finais e
+  validação full: +12,24%/Sharpe 1,027 e +8,93%/Sharpe 0,774, ambas positivas a custo 2×.
+- Relatórios de robustez com DSR 0,962/0,966; PBO explicitamente não aplicável com seis trials e
+  candidate gates preservados como bloqueados, sem promoção ou lockbox artificial.
+- Strategies de trend following `multi_horizon_trend:v1` e `market_regime_trend:v1`, além da
+  policy long/flat `buffered_long_flat:v1`, sem ponta vendida e com rebalanceamento amortecido.
+- Três screens pré-registrados de tendência: o voto multi-horizon não atingiu o Sharpe mínimo; o
+  Donchian long/flat venceu no desenvolvimento e perdeu 5,60% no trecho final; o filtro de regime
+  confirmou +6,54%, Sharpe 0,318 e permaneceu positivo com custos 2× (+3,59%).
+- Validação full do filtro de regime com bootstrap positivo em 62,8%, DSR final 0,673 e quatro de
+  quatro vizinhos de desenvolvimento positivos; resultado preservado como exploratório e não
+  promovido porque o período final já foi reutilizado e não existe lockbox independente.
+- Nova rodada com requisito pré-registrado de Sharpe 1,00: `carry_multi_regime:v1`,
+  `carry_consensus_strength:v1`, buffers lentos e model average dos seis pesos originais.
+- O overlay de regime atingiu Sharpe 1,196 no desenvolvimento, mas 0,952 no período final; o model
+  average atingiu 1,068 e depois 0,928. Consenso (0,987) e buffers lentos (0,821) falharam antes da
+  avaliação final. Somente o `carry_multi_horizon` 60/30/10 original permanece confirmado acima
+  de um, com Sharpe 1,027.
+- Sleeves de consenso totalmente zeradas agora mapeiam deterministicamente para caixa em vez de
+  abortar a policy de duas sleeves; a tentativa técnica falha anterior permanece no registry.
 
 ## 0.6.0 — 2026-08-28 — Fase 3.5
 

@@ -1,0 +1,27 @@
+hypothesis_id: HYP-MARKET-REGIME-TREND-LONG-FLAT-0001
+title: Dual-horizon uptrends may work when the equal-weight crypto market is also rising
+mechanism: >-
+  Each asset is held long only when both its fast and slow causal returns are positive and the
+  equal-weight slow return of the fixed research universe is positive. Requiring agreement between
+  individual persistence and the broad market regime should avoid long altcoin exposure during
+  market-wide declines, while a 72-hour holding buffer limits turnover.
+expected_direction: positive net returns from persistent individual uptrends in rising market regimes
+expected_horizon: 72-hour buffered positions with hourly mark-to-market
+target_universe: fixed point-in-time BTCUSDT, ETHUSDT and SOLUSDT research universe
+preregistered_success_criteria:
+  development_end: "2024-08-27"
+  development_net_total_return_min: "0.0"
+  development_net_sharpe_min: "0.50"
+  development_cost_1_5x_total_return_min: "0.0"
+  development_signal_delay_total_return_min: "0.0"
+  development_profitable_variants_min: 3
+  final_oos_days: 728
+  final_net_total_return_min: "0.0"
+  final_net_sharpe_min: "0.30"
+  final_cost_1_5x_total_return_min: "0.0"
+  promotion_allowed: false
+status: READY
+notes: >-
+  Fast horizons of 72/168 hours and slow horizons of 336/720 hours are frozen before development.
+  The market filter uses only contemporaneously available trailing returns. At most one winner may
+  be evaluated on the previously reused final two-year period, so that result remains exploratory.

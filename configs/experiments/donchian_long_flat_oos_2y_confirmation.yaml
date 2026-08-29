@@ -1,0 +1,62 @@
+campaign:
+  name: donchian_long_flat_v1_oos_2y_confirmation
+  description: >-
+    Single frozen confirmation trial on the final 728 complete OOS days. Strategy and portfolio
+    parameters are copied unchanged from the preregistered development winner; no grid remains.
+  hypothesis_id: HYP-DONCHIAN-LONG-FLAT-0001
+  artifact_policy: summary
+  max_trials: 1
+
+dataset:
+  manifest: var/data/gold/binance/usdm/research_dataset/version=57deca28711c2c48/dataset.json
+
+feature_set:
+  name: phase3_baseline_features
+  version: "1"
+
+label:
+  name: gross_forward_return_1h
+  version: "1"
+  horizon_minutes: 60
+
+strategy:
+  name: donchian_breakout
+  version: "1"
+  fixed:
+    entry_window_hours: 720
+    exit_window_hours: 72
+
+portfolio:
+  name: buffered_long_flat
+  version: "1"
+  fixed:
+    signal_threshold: 0.0
+    rebalance_interval_hours: 24
+    gross_exposure: 0.50
+    annual_volatility_target: 0.15
+    max_symbol_weight: 0.25
+
+execution:
+  name: bar_next_open
+  version: "1"
+  fixed: {}
+
+costs:
+  name: configured_taker
+  version: "1"
+  fixed:
+    cost_multiplier: 1.0
+
+validation:
+  profile: discovery
+  split_plan: expanding_walk_forward_v1
+  train_days: 1435
+  test_days: 14
+  embargo_bars: 1
+  stress_cost_multipliers: [1.5]
+  stress_signal_delay_bars: [1]
+
+runner:
+  max_workers: 1
+  fail_fast: true
+  resume: true

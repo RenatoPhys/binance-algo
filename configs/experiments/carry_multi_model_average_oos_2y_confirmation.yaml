@@ -1,0 +1,68 @@
+campaign:
+  name: carry_multi_model_average_v1_oos_2y_confirmation
+  description: >-
+    Single frozen evaluation of the fixed 2/3, 1/6, 1/6 model-average weights on the final 728
+    complete days. No research or execution parameter differs from development.
+  hypothesis_id: HYP-CARRY-MULTI-MODEL-AVERAGE-0001
+  artifact_policy: summary
+  max_trials: 1
+
+dataset:
+  manifest: var/data/gold/binance/usdm/research_dataset/version=57deca28711c2c48/dataset.json
+
+feature_set:
+  name: phase3_baseline_features
+  version: "1"
+
+label:
+  name: gross_forward_return_1h
+  version: "1"
+  horizon_minutes: 60
+
+strategy:
+  name: carry_multi_horizon
+  version: "1"
+  fixed:
+    funding_rate_weight: 1.0
+    funding_change_weight: 0.0
+    momentum_confirmation_weight: 0.25
+    fast_lookback_hours: 168
+    slow_lookback_hours: 336
+
+portfolio:
+  name: buffered_three_sleeve_neutral
+  version: "1"
+  fixed:
+    carry_weight: 0.6666666666666666
+    fast_strength_weight: 0.1666666666666667
+    slow_strength_weight: 0.1666666666666667
+    no_trade_score_band: 1.0
+    rebalance_interval_hours: 48
+    gross_exposure: 0.50
+    annual_volatility_target: 0.15
+    max_symbol_weight: 0.25
+
+execution:
+  name: bar_next_open
+  version: "1"
+  fixed: {}
+
+costs:
+  name: configured_taker
+  version: "1"
+  fixed:
+    cost_multiplier: 1.0
+
+validation:
+  profile: discovery
+  split_plan: expanding_walk_forward_v1
+  train_days: 1435
+  test_days: 14
+  embargo_bars: 1
+  stress_cost_multipliers: [1.5]
+  stress_signal_delay_bars: [1]
+
+runner:
+  max_workers: 1
+  fail_fast: true
+  resume: true
