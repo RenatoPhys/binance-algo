@@ -101,8 +101,32 @@ uv run binance-algo --config configs/research.yaml research campaign run \
 uv run binance-algo --config configs/research.yaml research campaign run \
   --file configs/experiments/residual_mean_reversion_discovery.yaml
 uv run binance-algo --config configs/research.yaml research dashboard build --open
+uv run binance-algo --config configs/research.yaml research portfolio inventory
+uv run binance-algo --config configs/research.yaml research portfolio scaffold \
+  --experiment-id <experiment_id_1> --experiment-id <experiment_id_2> \
+  --output var/config/research_strategy_portfolios.yaml
+uv run binance-algo --config configs/research.yaml research portfolio validate \
+  --file var/config/research_strategy_portfolios.yaml
+uv run binance-algo --config configs/research.yaml research dashboard build \
+  --portfolio-file var/config/research_strategy_portfolios.yaml --open
 uv run python scripts/benchmark_campaign.py --trials 20 --workers 4
 ```
+
+### Dashboard de portfólios de estratégias
+
+O dashboard v2 combina apenas sleeves declaradas por `experiment_id`; não seleciona estratégias
+nem otimiza pesos. O inventário local em `var/reports` verifica os bundles do registry e expõe
+compatibilidade, janela, perfil, estágio, métricas e disponibilidade de artifacts. O scaffold
+aceita somente IDs fornecidos pelo pesquisador. A configuração operacional deve permanecer em
+`var/config/research_strategy_portfolios.yaml`, que é ignorada pelo Git; o exemplo versionado em
+`configs/examples/research_strategy_portfolios.example.yaml` contém placeholders documentais.
+
+`strict` exige dataset, label, execução, custos, split, frequência, símbolos, folds e timestamps
+compatíveis. `intersection` é opt-in exploratório e informa toda perda de cobertura. O painel
+mostra contabilidade `sleeve` e `netted`, atribuição, drawdown, correlação de retornos, similaridade
+de posições e operações bar-based. Esses trade legs são reconstruções simuladas, não ordens ou
+fills. O período final atual não é lockbox independente e nenhum resultado do painel promove
+alpha ou autoriza trading.
 
 ### Estratégias carry diversificadas
 

@@ -2,6 +2,16 @@
 
 ## Unreleased — MVP de exploração de estratégias
 
+- Dashboard schema v2 para portfólios de estratégias declarados, preservando catálogo, falhas e
+  resultados negativos quando nenhum portfolio file é fornecido.
+- Schema YAML estrito, loader registry-only com fallback para o último sucesso verificado,
+  compatibilidade strict/intersection e provenance por run/digest/checksum.
+- Contabilidade comparável `sleeve`/`netted` com o mesmo helper de custos explícitos do backtest,
+  fechamento por fold, reconciliações e métricas de economia de netting.
+- Analytics e HTML executivo para equity/drawdown/rolling, attribution, correlação/similaridade,
+  concentração, turnover, operações simuladas e estabilidade por mês/fold/regime.
+- CLI `research portfolio inventory|scaffold|validate`, configuração operacional ignorada em
+  `var/config`, schema/exemplo versionados e ADR 0015.
 - Dashboard HTML offline e snapshot JSON determinístico, com filtros, ordenação, links relativos,
   falhas e resultados negativos preservados.
 - Perfil de campanha `discovery` restrito a baseline, custo `1.5x`, atraso de uma barra e artifacts

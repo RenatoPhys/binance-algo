@@ -102,6 +102,7 @@ from binance_algo.research.experiments.store import ResearchStore
 from binance_algo.research.strategy_portfolio.inventory import (
     write_strategy_portfolio_inventory,
 )
+from binance_algo.research.strategy_portfolio.scaffold import write_scaffold
 from binance_algo.research.strategy_portfolio.validation import (
     validate_portfolio_declarations,
 )
@@ -317,6 +318,39 @@ def research_portfolio_validate(
     console.print(table)
     if not rows or any(not row.valid for row in rows):
         raise typer.Exit(code=1)
+
+
+@research_portfolio_app.command("scaffold")
+def research_portfolio_scaffold(
+    ctx: typer.Context,
+    experiment_ids: Annotated[
+        list[str],
+        typer.Option(
+            "--experiment-id",
+            help="Exact registry experiment ID; repeat for each declared component.",
+        ),
+    ],
+    output: Annotated[
+        Path,
+        typer.Option("--output", help="Destination YAML file.", dir_okay=False),
+    ] = Path("var/config/research_strategy_portfolios.yaml"),
+) -> None:
+    """Write equal weights for only the experiment IDs explicitly supplied."""
+
+    try:
+        settings = _settings(ctx)
+        _configure(settings)
+        identifiers = tuple(experiment_ids)
+        store = ResearchStore(settings.research_db_path)
+        unknown = [
+            identifier for identifier in identifiers if store.get_experiment(identifier) is None
+        ]
+        if unknown:
+            raise ResearchError(f"unknown experiment IDs: {unknown}")
+        path = write_scaffold(output, identifiers)
+    except BinanceAlgoError as exc:
+        _fail(exc)
+    console.print(f"Strategy portfolio scaffold written: {path}")
 
 
 @research_portfolio_app.command("inventory")

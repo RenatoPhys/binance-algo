@@ -109,6 +109,14 @@ iniciada.
 - [x] Rodada Sharpe 1,00: overlay 1,196→0,952 e model average 1,068→0,928
 - [x] Consenso 0,987 e buffers lentos 0,821 rejeitados ainda no desenvolvimento
 - [x] Única confirmação acima de um permanece `carry_multi_horizon` 60/30/10, Sharpe 1,027
+- [x] Dashboard v2 de portfólios declarados, offline, determinístico e sem nova stack web
+- [x] Contrato YAML/schema v1 com pesos fixed/equal, resolução registry-only e artifacts verificados
+- [x] Compatibilidade strict/intersection com identidade, grid, símbolos e cobertura explícitos
+- [x] Contabilidade sleeve/netted reutilizando custos do backtest e reconciliação em `1e-10`
+- [x] Analytics de performance, drawdown, attribution, concentração, correlação e operações simuladas
+- [x] Inventário/validate/scaffold na CLI e isolamento visual de portfólios inválidos
+- [x] Três configurações locais conscientes: champion, equal comparison e diversified manual
+- [x] ADR 0015, exemplo documental, testes sintéticos e dashboard real sobre artifacts existentes
 
 ## Pending
 
