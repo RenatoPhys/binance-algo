@@ -1,0 +1,27 @@
+hypothesis_id: HYP-CARRY-CONSENSUS-STRENGTH-0001
+title: Agreement between fast and slow relative strength may improve the carry ensemble
+mechanism: >-
+  A neutral strength sleeve is active only when the 168-hour and 336-hour cross-sectional trends
+  have the same sign. Disagreement maps to zero before portfolio construction. Blending this
+  persistent consensus with funding carry may remove transient ranking reversals while retaining
+  market neutrality and the existing 48-hour turnover buffer.
+expected_direction: positive carry returns with fewer relative-strength whipsaws and Sharpe above one
+expected_horizon: 48-hour buffered target weights with hourly mark-to-market
+target_universe: fixed point-in-time BTCUSDT, ETHUSDT and SOLUSDT research universe
+preregistered_success_criteria:
+  development_end: "2024-08-27"
+  development_net_total_return_min: "0.0"
+  development_net_sharpe_min: "1.00"
+  development_cost_1_5x_total_return_min: "0.0"
+  development_signal_delay_total_return_min: "0.0"
+  development_profitable_variants_min: 2
+  final_oos_days: 728
+  final_net_total_return_min: "0.0"
+  final_net_sharpe_min: "1.00"
+  final_cost_1_5x_total_return_min: "0.0"
+  final_cost_2x_total_return_min: "0.0"
+  promotion_allowed: false
+status: READY
+notes: >-
+  Horizons, carry inputs and carry weights of 60/70/80 percent are frozen before development.
+  At most one winner may reach the already reused final period, so no result is independent OOS.

@@ -1,0 +1,27 @@
+hypothesis_id: HYP-CARRY-MULTIHORIZON-0001
+title: Funding carry diversified across seven- and fourteen-day relative strength
+mechanism: >-
+  Buffered funding carry was profitable after stressed costs in development, while seven- and
+  fourteen-day cross-sectional relative strength were both profitable and approximately
+  uncorrelated with carry returns. Combining independently constructed neutral target weights
+  should retain the carry premium while reducing dependence on one trend horizon.
+expected_direction: positive net returns from carry with lower single-horizon concentration
+expected_horizon: 48-hour buffered sleeve updates with hourly mark-to-market
+target_universe: fixed point-in-time BTCUSDT, ETHUSDT and SOLUSDT research universe
+preregistered_success_criteria:
+  development_end: "2024-08-27"
+  development_net_total_return_min: "0.0"
+  development_net_sharpe_min: "0.80"
+  development_cost_1_5x_total_return_min: "0.0"
+  development_signal_delay_total_return_min: "0.0"
+  development_profitable_weight_variants_min: 4
+  final_oos_days: 728
+  final_net_total_return_min: "0.0"
+  final_net_sharpe_min: "0.50"
+  final_cost_1_5x_total_return_min: "0.0"
+  promotion_allowed: false
+status: READY
+notes: >-
+  The carry signal, 168/336-hour horizons, 48-hour rebalance and six convex weight combinations
+  are frozen before this campaign. At most one development winner may be evaluated on the final
+  two-year development OOS; that period is not an independent lockbox.

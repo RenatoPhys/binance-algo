@@ -1,0 +1,25 @@
+hypothesis_id: HYP-DONCHIAN-LONG-FLAT-0001
+title: Donchian breakouts may be more stable without the crypto short leg
+mechanism: >-
+  Prior Donchian development results were positive but the frozen long/short confirmation failed.
+  Reusing the same causal breakout state while mapping bearish states to cash tests whether the
+  failure came from short exposure rather than from the breakout mechanism itself.
+expected_direction: positive net returns from persistent upside breakouts with bounded downside
+expected_horizon: 24- or 72-hour buffered positions with hourly mark-to-market
+target_universe: fixed point-in-time BTCUSDT, ETHUSDT and SOLUSDT research universe
+preregistered_success_criteria:
+  development_end: "2024-08-27"
+  development_net_total_return_min: "0.0"
+  development_net_sharpe_min: "0.50"
+  development_cost_1_5x_total_return_min: "0.0"
+  development_signal_delay_total_return_min: "0.0"
+  development_profitable_variants_min: 4
+  final_oos_days: 728
+  final_net_total_return_min: "0.0"
+  final_net_sharpe_min: "0.30"
+  final_cost_1_5x_total_return_min: "0.0"
+  promotion_allowed: false
+status: READY
+notes: >-
+  Entry windows of 168/336/720 hours, a 72-hour exit and 24/72-hour rebalance intervals are frozen
+  before development. At most one winner may be evaluated on the final two-year development OOS.

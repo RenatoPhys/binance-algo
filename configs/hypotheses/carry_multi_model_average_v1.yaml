@@ -1,0 +1,26 @@
+hypothesis_id: HYP-CARRY-MULTI-MODEL-AVERAGE-0001
+title: Averaging the preregistered multi-horizon carry weights may reduce selection risk
+mechanism: >-
+  The arithmetic mean of all six originally preregistered convex portfolios is used instead of
+  selecting the highest-Sharpe member. This fixes the carry, fast-strength and slow-strength
+  weights at 2/3, 1/6 and 1/6. Model averaging may retain the broad profitable neighborhood while
+  reducing sensitivity to the selected 60/30/10 point.
+expected_direction: stable net carry and trend returns with Sharpe above one
+expected_horizon: 48-hour buffered target weights with hourly mark-to-market
+target_universe: fixed point-in-time BTCUSDT, ETHUSDT and SOLUSDT research universe
+preregistered_success_criteria:
+  development_end: "2024-08-27"
+  development_net_total_return_min: "0.0"
+  development_net_sharpe_min: "1.00"
+  development_cost_1_5x_total_return_min: "0.0"
+  development_signal_delay_total_return_min: "0.0"
+  final_oos_days: 728
+  final_net_total_return_min: "0.0"
+  final_net_sharpe_min: "1.00"
+  final_cost_1_5x_total_return_min: "0.0"
+  final_cost_2x_total_return_min: "0.0"
+  promotion_allowed: false
+status: READY
+notes: >-
+  This is one fixed model-average trial, not a new weight search. All signal, risk, execution and
+  temporal parameters match the original multi-horizon family. The final period remains reused.

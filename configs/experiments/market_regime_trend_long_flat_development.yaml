@@ -1,0 +1,63 @@
+campaign:
+  name: market_regime_trend_long_flat_v1_development
+  description: >-
+    Four preregistered dual-horizon long/flat variants requiring a positive equal-weight market
+    regime and using a fixed 72-hour holding buffer.
+  hypothesis_id: HYP-MARKET-REGIME-TREND-LONG-FLAT-0001
+  artifact_policy: summary
+  max_trials: 4
+
+dataset:
+  manifest: var/data/gold/binance/usdm/research_dataset/version=5f83d3d2f1d74139/dataset.json
+
+feature_set:
+  name: phase3_baseline_features
+  version: "1"
+
+label:
+  name: gross_forward_return_1h
+  version: "1"
+  horizon_minutes: 60
+
+strategy:
+  name: market_regime_trend
+  version: "1"
+  fixed: {}
+  grid:
+    fast_lookback_hours: [72, 168]
+    slow_lookback_hours: [336, 720]
+
+portfolio:
+  name: buffered_long_flat
+  version: "1"
+  fixed:
+    signal_threshold: 0.0
+    rebalance_interval_hours: 72
+    gross_exposure: 0.50
+    annual_volatility_target: 0.15
+    max_symbol_weight: 0.25
+
+execution:
+  name: bar_next_open
+  version: "1"
+  fixed: {}
+
+costs:
+  name: configured_taker
+  version: "1"
+  fixed:
+    cost_multiplier: 1.0
+
+validation:
+  profile: discovery
+  split_plan: expanding_walk_forward_v1
+  train_days: 365
+  test_days: 14
+  embargo_bars: 1
+  stress_cost_multipliers: [1.5]
+  stress_signal_delay_bars: [1]
+
+runner:
+  max_workers: 3
+  fail_fast: false
+  resume: true

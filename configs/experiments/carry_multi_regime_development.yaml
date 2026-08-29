@@ -1,0 +1,73 @@
+campaign:
+  name: carry_multi_regime_v1_development
+  description: >-
+    Three preregistered convex overlays of an orthogonal long/flat regime sleeve on the frozen
+    60/30/10 multi-horizon carry core.
+  hypothesis_id: HYP-CARRY-MULTI-REGIME-0001
+  artifact_policy: summary
+  max_trials: 3
+
+dataset:
+  manifest: var/data/gold/binance/usdm/research_dataset/version=5f83d3d2f1d74139/dataset.json
+
+feature_set:
+  name: phase3_baseline_features
+  version: "1"
+
+label:
+  name: gross_forward_return_1h
+  version: "1"
+  horizon_minutes: 60
+
+strategy:
+  name: carry_multi_regime
+  version: "1"
+  fixed:
+    funding_rate_weight: 1.0
+    funding_change_weight: 0.0
+    momentum_confirmation_weight: 0.25
+    fast_lookback_hours: 168
+    slow_lookback_hours: 336
+    regime_fast_lookback_hours: 168
+    regime_slow_lookback_hours: 720
+
+portfolio:
+  name: buffered_carry_regime
+  version: "1"
+  fixed:
+    core_carry_weight: 0.60
+    core_fast_strength_weight: 0.30
+    core_slow_strength_weight: 0.10
+    no_trade_score_band: 1.0
+    signal_threshold: 0.0
+    rebalance_interval_hours: 48
+    gross_exposure: 0.50
+    annual_volatility_target: 0.15
+    max_symbol_weight: 0.25
+  grid:
+    regime_trend_weight: [0.10, 0.20, 0.30]
+
+execution:
+  name: bar_next_open
+  version: "1"
+  fixed: {}
+
+costs:
+  name: configured_taker
+  version: "1"
+  fixed:
+    cost_multiplier: 1.0
+
+validation:
+  profile: discovery
+  split_plan: expanding_walk_forward_v1
+  train_days: 365
+  test_days: 14
+  embargo_bars: 1
+  stress_cost_multipliers: [1.5]
+  stress_signal_delay_bars: [1]
+
+runner:
+  max_workers: 3
+  fail_fast: false
+  resume: true

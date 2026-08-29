@@ -93,9 +93,44 @@ existirem snapshots históricos de listing, delisting, qualidade e liquidez, cam
 devem continuar no universo fixado ex ante. É proibido usar o estado atual da exchange para
 reconstruir composição histórica.
 
-## Próximas hipóteses permitidas
+## Hipóteses carry diversificadas
 
-Com a infraestrutura concluída, podem começar screenings pequenos e pré-registrados de momentum
-mais lento (4h–168h), funding carry e mean reversion residual. Cada família deve ser uma strategy
-versionada distinta, passar pelo registry/campaign/ledger e permanecer development OOS. Nenhuma
-está apta à Fase 4 sem estabilidade líquida, correção por múltiplos testes e lockbox independente.
+Os screenings `carry_multi_horizon:v1` e `carry_dual_trend:v1` combinam target weights de três
+sleeves causais, não scores agregados antes da construção da carteira. Cada grade contém seis
+pesos convexos pré-registrados. Somente o melhor Sharpe de desenvolvimento foi congelado para uma
+confirmação única nos 728 dias finais; esses dias permanecem development OOS porque o período já
+participa do ciclo de pesquisa.
+
+As duas confirmações foram líquidas e positivas sob custos 1×, 1,5× e 2×. Os relatórios full das
+grades produziram DSR acima de 0,95; PBO ficou `NOT_APPLICABLE` com seis trials. Candidate reports
+continuam bloqueados por proveniência/ausência de lockbox e pelos gates específicos registrados.
+Nenhuma estratégia está apta à Fase 4 sem uma lockbox independente e estabilidade em universo
+mais amplo com metadata point-in-time.
+
+## Hipóteses de trend following long/flat
+
+Os screens `multi_horizon_trend:v1`, Donchian long/flat e `market_regime_trend:v1` não permitem
+posições vendidas. Scores negativos viram caixa e a exposição long é dimensionada por volatilidade
+com limite por símbolo. O filtro de regime exige que retornos trailing rápidos e lentos do ativo
+sejam positivos e que o retorno lento médio do universo fixo também seja positivo.
+
+O voto multi-horizon não atingiu o Sharpe mínimo de desenvolvimento. O Donchian long/flat passou
+no desenvolvimento, mas perdeu 5,60% na confirmação congelada. O filtro de regime 168h/720h foi
+positivo no desenvolvimento e retornou 6,54% nos 728 dias finais, sobrevivendo a custo 2× com
+3,59%. A evidência permanece fraca: bootstrap positivo em 62,8%, DSR final 0,673, somente 17/52
+folds finais lucrativos e perda no regime intermediário. Além disso, o período final já foi
+reutilizado por várias hipóteses. O resultado é exploratório, não uma confirmação independente,
+e não altera o bloqueio de promoção sem lockbox nova.
+
+## Busca condicionada a Sharpe 1,00
+
+Uma rodada separada registrou Sharpe líquido mínimo de 1,00 antes do desenvolvimento. O overlay
+de 10/20/30% do trend de regime sobre o carry multi-horizonte produziu três Sharpes acima de um no
+desenvolvimento; o vencedor de 20% atingiu 1,196. Congelado, caiu para 0,952 no período final. O
+model average 2/3, 1/6, 1/6 passou com 1,068 no desenvolvimento e falhou com 0,928 no final.
+Consenso rápido/lento (0,987) e buffers de 72/96/168h (máximo 0,821) não avançaram.
+
+Não foi permitido testar retrospectivamente no período final o overlay de 10% ou outros vizinhos
+depois da falha do vencedor. A única configuração que permanece acima de um nesse período é o
+`carry_multi_horizon:v1` 60/30/10 previamente congelado, com Sharpe 1,027. O período foi reutilizado
+em diversas hipóteses e continua sendo development OOS, não lockbox ou evidência de retorno futuro.

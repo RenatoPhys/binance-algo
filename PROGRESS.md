@@ -95,6 +95,20 @@ iniciada.
 - [x] Perfis `discovery`/`full`, heartbeat por trial e benchmark real de campanhas
 - [x] Feature bundles explícitos dirigidos por YAML com equivalência exata do baseline
 - [x] Strategies `funding_carry:v1` e `residual_mean_reversion:v1` com campanhas discovery smoke
+- [x] Strategy `carry_multi_horizon:v1` e policy de três sleeves com pesos convexos estritos
+- [x] Strategy `carry_dual_trend:v1` combinando carry, força relativa e tendência SMA causal
+- [x] Doze variantes de desenvolvimento lucrativas, duas confirmações congeladas e validação full
+- [x] DSR 0,962/0,966 nas grades completas; PBO não aplicável e candidate gates bloqueados
+- [x] Policy `buffered_long_flat:v1` com pesos não negativos, inverse-vol scaling e buffer temporal
+- [x] Strategies `multi_horizon_trend:v1` e `market_regime_trend:v1` com retornos causais
+- [x] Screens long/flat multi-horizon, Donchian e filtro de regime preservando sucessos e falhas
+- [x] Filtro de regime 168h/720h: +6,54% final, Sharpe 0,318 e +3,59% sob custos 2×
+- [x] Bootstrap 62,8% e DSR final 0,673; resultado exploratório bloqueado sem nova lockbox
+- [x] Strategy `carry_multi_regime:v1` e policy convexa de carry neutro + trend long/flat
+- [x] Strategy `carry_consensus_strength:v1` com desacordo rápido/lento mapeado para caixa
+- [x] Rodada Sharpe 1,00: overlay 1,196→0,952 e model average 1,068→0,928
+- [x] Consenso 0,987 e buffers lentos 0,821 rejeitados ainda no desenvolvimento
+- [x] Única confirmação acima de um permanece `carry_multi_horizon` 60/30/10, Sharpe 1,027
 
 ## Pending
 
@@ -148,6 +162,10 @@ iniciada.
   `var/reports/panel_benchmark.json` e não constitui SLA
 - gates PR 9: `ruff format --check` em 145 arquivos, `ruff check`, mypy estrito em 84 módulos e
   `pytest -m "not network"` com 128 passed/2 deselected
+- gates do incremento de estratégias: `ruff format --check` em 174 arquivos, `ruff check`, mypy
+  estrito em 103 módulos e `pytest -m "not network"` com 164 passed/2 deselected
+- gates da rodada Sharpe 1,00: `ruff format --check` em 178 arquivos, `ruff check`, mypy estrito
+  em 106 módulos e `pytest -m "not network"` com 167 passed/2 deselected
 - registry real: schema 4 em `research.sqlite3`, WAL e foreign keys ativos, 18 features e o
   feature set `phase3_baseline_features:v1`; registro repetido da hipótese
   `HYP-RESMOM-0002` permaneceu idempotente

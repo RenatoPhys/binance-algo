@@ -1,0 +1,76 @@
+campaign:
+  name: carry_dual_trend_v1_development
+  description: >-
+    Six preregistered convex combinations of funding carry, seven-day relative strength and a
+    12/168-hour cross-sectional SMA trend sleeve, ending before the final two-year OOS.
+  hypothesis_id: HYP-CARRY-DUAL-TREND-0001
+  artifact_policy: summary
+  max_trials: 6
+
+dataset:
+  manifest: var/data/gold/binance/usdm/research_dataset/version=5f83d3d2f1d74139/dataset.json
+
+feature_set:
+  name: phase3_baseline_features
+  version: "1"
+
+label:
+  name: gross_forward_return_1h
+  version: "1"
+  horizon_minutes: 60
+
+strategy:
+  name: carry_dual_trend
+  version: "1"
+  fixed:
+    funding_rate_weight: 1.0
+    funding_change_weight: 0.0
+    momentum_confirmation_weight: 0.25
+    relative_strength_lookback_hours: 168
+    sma_fast_window_hours: 12
+    sma_slow_window_hours: 168
+
+portfolio:
+  name: buffered_three_sleeve_neutral
+  version: "1"
+  fixed:
+    no_trade_score_band: 1.0
+    rebalance_interval_hours: 48
+    gross_exposure: 0.50
+    annual_volatility_target: 0.15
+    max_symbol_weight: 0.25
+  grid:
+    carry_weight: [0.60, 0.70, 0.80]
+    fast_strength_weight: [0.10, 0.20, 0.30]
+    slow_strength_weight: [0.10, 0.20, 0.30]
+
+execution:
+  name: bar_next_open
+  version: "1"
+  fixed: {}
+
+costs:
+  name: configured_taker
+  version: "1"
+  fixed:
+    cost_multiplier: 1.0
+
+validation:
+  profile: discovery
+  split_plan: expanding_walk_forward_v1
+  train_days: 365
+  test_days: 14
+  embargo_bars: 1
+  stress_cost_multipliers: [1.5]
+  stress_signal_delay_bars: [1]
+  require_parameter_sum:
+    fields:
+      - carry_weight
+      - fast_strength_weight
+      - slow_strength_weight
+    equals: 1.0
+
+runner:
+  max_workers: 3
+  fail_fast: false
+  resume: true

@@ -1,0 +1,27 @@
+hypothesis_id: HYP-SLOW-BUFFERED-CARRY-MULTI-0001
+title: Longer holding buffers may improve the net Sharpe of multi-horizon carry
+mechanism: >-
+  The frozen 60/30/10 carry, 7-day strength and 14-day strength portfolio already exceeded Sharpe
+  one with a 48-hour buffer. Holding the same causal targets for 72, 96 or 168 hours may reduce
+  explicit turnover costs and short-lived ranking reversals without changing signals, exposure or
+  sleeve weights.
+expected_direction: similar gross edge with lower turnover and net Sharpe above one
+expected_horizon: 72- to 168-hour buffered target weights with hourly mark-to-market
+target_universe: fixed point-in-time BTCUSDT, ETHUSDT and SOLUSDT research universe
+preregistered_success_criteria:
+  development_end: "2024-08-27"
+  development_net_total_return_min: "0.0"
+  development_net_sharpe_min: "1.00"
+  development_cost_1_5x_total_return_min: "0.0"
+  development_signal_delay_total_return_min: "0.0"
+  development_profitable_variants_min: 3
+  final_oos_days: 728
+  final_net_total_return_min: "0.0"
+  final_net_sharpe_min: "1.00"
+  final_cost_1_5x_total_return_min: "0.0"
+  final_cost_2x_total_return_min: "0.0"
+  promotion_allowed: false
+status: READY
+notes: >-
+  Signals, 60/30/10 sleeve weights, risk limits and 72/96/168-hour buffers are frozen before
+  development. At most one winner may be evaluated on the reused final period.

@@ -1,0 +1,28 @@
+hypothesis_id: HYP-CARRY-MULTI-REGIME-0001
+title: A small orthogonal market-regime sleeve may improve multi-horizon carry risk adjustment
+mechanism: >-
+  The frozen 60/30/10 neutral carry core is blended with a long/flat 168/720-hour market-regime
+  trend sleeve. Their development return correlation was 0.007 before this hypothesis was
+  registered. A small convex allocation to the directional sleeve may reduce dependence on the
+  carry return path without increasing gross exposure or changing the execution model.
+expected_direction: higher net risk-adjusted return than either sleeve alone
+expected_horizon: 48-hour buffered target weights with hourly mark-to-market
+target_universe: fixed point-in-time BTCUSDT, ETHUSDT and SOLUSDT research universe
+preregistered_success_criteria:
+  development_end: "2024-08-27"
+  development_net_total_return_min: "0.0"
+  development_net_sharpe_min: "1.00"
+  development_cost_1_5x_total_return_min: "0.0"
+  development_signal_delay_total_return_min: "0.0"
+  development_profitable_variants_min: 3
+  final_oos_days: 728
+  final_net_total_return_min: "0.0"
+  final_net_sharpe_min: "1.00"
+  final_cost_1_5x_total_return_min: "0.0"
+  final_cost_2x_total_return_min: "0.0"
+  promotion_allowed: false
+status: READY
+notes: >-
+  The carry core, trend horizons and 10/20/30 percent overlay weights are frozen before the
+  campaign. At most one development winner may be evaluated on the reused final two-year period;
+  that result is exploratory and cannot restore lockbox independence.
