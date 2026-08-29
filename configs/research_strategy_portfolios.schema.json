@@ -1,0 +1,86 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "research_strategy_portfolios.schema.json",
+  "title": "Declared research strategy portfolios",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "portfolios"],
+  "properties": {
+    "schema_version": {"const": 1},
+    "portfolios": {
+      "type": "array",
+      "minItems": 1,
+      "items": {"$ref": "#/$defs/portfolio"}
+    }
+  },
+  "$defs": {
+    "component": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["experiment_id", "label"],
+      "properties": {
+        "experiment_id": {"type": "string", "minLength": 1},
+        "run_id": {"type": "string", "minLength": 1},
+        "label": {"type": "string", "minLength": 1, "maxLength": 200},
+        "capital_weight": {"type": "number", "minimum": 0, "maximum": 1}
+      }
+    },
+    "alignment": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "policy": {"enum": ["strict", "intersection"], "default": "strict"},
+        "require_same_dataset": {"type": "boolean", "default": true},
+        "require_same_label": {"type": "boolean", "default": true},
+        "require_same_execution_model": {"type": "boolean", "default": true},
+        "require_same_cost_model": {"type": "boolean", "default": true},
+        "require_same_split_plan": {"type": "boolean", "default": true}
+      }
+    },
+    "analytics": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "correlation_frequency": {"const": "daily", "default": "daily"},
+        "rolling_windows_hours": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 6,
+          "uniqueItems": true,
+          "items": {"type": "integer", "minimum": 24, "maximum": 8760},
+          "default": [720, 2160]
+        },
+        "trade_epsilon": {
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "maximum": 0.0001,
+          "default": 1e-10
+        }
+      }
+    },
+    "portfolio": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["portfolio_id", "title", "description", "components"],
+      "properties": {
+        "portfolio_id": {
+          "type": "string",
+          "pattern": "^[a-z0-9][a-z0-9_.-]{0,127}$"
+        },
+        "title": {"type": "string", "minLength": 1, "maxLength": 240},
+        "description": {"type": "string", "minLength": 1, "maxLength": 4000},
+        "accounting_mode": {"enum": ["sleeve", "netted"], "default": "netted"},
+        "weighting": {"enum": ["fixed", "equal_weight"], "default": "fixed"},
+        "components": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 12,
+          "items": {"$ref": "#/$defs/component"}
+        },
+        "alignment": {"$ref": "#/$defs/alignment"},
+        "analytics": {"$ref": "#/$defs/analytics"}
+      },
+      "description": "Runtime validation also requires unique IDs and exact fixed-weight sum 1; equal_weight forbids capital_weight."
+    }
+  }
+}
