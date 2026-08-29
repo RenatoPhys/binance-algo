@@ -1,0 +1,64 @@
+campaign:
+  name: carry_relative_strength_ensemble_v1_development
+  description: >-
+    One fixed development trial combining actual carry and relative-strength target weights.
+  hypothesis_id: HYP-CARRY-RELATIVE-ENSEMBLE-0001
+  artifact_policy: summary
+  max_trials: 1
+
+dataset:
+  manifest: var/data/gold/binance/usdm/research_dataset/version=5f83d3d2f1d74139/dataset.json
+
+feature_set:
+  name: phase3_baseline_features
+  version: "1"
+
+label:
+  name: gross_forward_return_1h
+  version: "1"
+  horizon_minutes: 60
+
+strategy:
+  name: carry_relative_strength
+  version: "1"
+  fixed:
+    funding_rate_weight: 1.0
+    funding_change_weight: 0.0
+    momentum_confirmation_weight: 0.25
+    relative_strength_lookback_hours: 168
+
+portfolio:
+  name: buffered_two_sleeve_neutral
+  version: "1"
+  fixed:
+    carry_weight: 0.70
+    no_trade_score_band: 1.0
+    rebalance_interval_hours: 48
+    gross_exposure: 0.50
+    annual_volatility_target: 0.15
+    max_symbol_weight: 0.25
+
+execution:
+  name: bar_next_open
+  version: "1"
+  fixed: {}
+
+costs:
+  name: configured_taker
+  version: "1"
+  fixed:
+    cost_multiplier: 1.0
+
+validation:
+  profile: discovery
+  split_plan: expanding_walk_forward_v1
+  train_days: 365
+  test_days: 14
+  embargo_bars: 1
+  stress_cost_multipliers: [1.5]
+  stress_signal_delay_bars: [1]
+
+runner:
+  max_workers: 1
+  fail_fast: true
+  resume: true

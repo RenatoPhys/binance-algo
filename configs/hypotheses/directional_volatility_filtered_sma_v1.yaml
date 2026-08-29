@@ -1,0 +1,29 @@
+hypothesis_id: HYP-DIRECTIONAL-VOL-FILTERED-SMA-0001
+title: Training-only volatility gating may stabilize directional SMA trend
+mechanism: >-
+  The profitable but low-Sharpe 24h/168h directional SMA is exposed only when the current market
+  volatility regime is below a threshold estimated exclusively from each fold's training sample.
+  Avoiding the most turbulent regimes may reduce trend whipsaws and drawdowns while retaining its
+  near-zero correlation to market-neutral funding carry.
+expected_direction: long positive individual trends and short negative trends outside high volatility
+expected_horizon: daily holding interval with hourly mark-to-market
+target_universe: fixed point-in-time BTCUSDT, ETHUSDT and SOLUSDT research universe
+preregistered_success_criteria:
+  development_end: "2024-08-27"
+  development_net_total_return_min: "0.0"
+  development_net_sharpe_min: "0.5"
+  development_cost_1_5x_total_return_min: "0.0"
+  development_signal_delay_total_return_min: "0.0"
+  development_abs_correlation_to_funding_carry_max: "0.75"
+  development_90_10_combined_sharpe_min: "0.85"
+  final_oos_days: 728
+  final_net_total_return_min: "0.0"
+  final_net_sharpe_min: "0.5"
+  final_cost_1_5x_total_return_min: "0.0"
+  promotion_allowed: false
+status: READY
+notes: >-
+  This follow-up is motivated by the preregistered directional SMA screen, whose best trial was
+  profitable and cost-robust but failed its Sharpe criterion. The SMA, daily rebalance, 0.002 signal
+  threshold and 90/10 diagnostic portfolio weight are fixed. Only three training-only volatility
+  quantiles are screened; at most one candidate may reach final OOS.

@@ -1,0 +1,27 @@
+hypothesis_id: HYP-DIRECTIONAL-DONCHIAN-0001
+title: Stateful price breakouts may diversify carry with fewer trend whipsaws
+mechanism: >-
+  Each asset enters long above its prior Donchian high and short below its prior Donchian low,
+  using only closed hourly returns. Positions persist until an opposite entry or a shorter exit
+  channel is crossed. Explicit state and buffered inverse-volatility sizing may retain large trends
+  while avoiding the continuous weak signals that reduced SMA trend quality.
+expected_direction: long confirmed upside breakouts and short confirmed downside breakouts
+expected_horizon: one to 30-day trend episodes with daily or three-day portfolio updates
+target_universe: fixed point-in-time BTCUSDT, ETHUSDT and SOLUSDT research universe
+preregistered_success_criteria:
+  development_end: "2024-08-27"
+  development_net_total_return_min: "0.0"
+  development_net_sharpe_min: "0.5"
+  development_cost_1_5x_total_return_min: "0.0"
+  development_signal_delay_total_return_min: "0.0"
+  development_abs_correlation_to_funding_carry_max: "0.75"
+  final_oos_days: 728
+  final_net_total_return_min: "0.0"
+  final_net_sharpe_min: "0.5"
+  final_cost_1_5x_total_return_min: "0.0"
+  promotion_allowed: false
+status: READY
+notes: >-
+  Three conventional entry channels (7, 14 and 30 days), a fixed three-day exit channel and two
+  holding intervals are declared before the development screen. At most one candidate may be
+  frozen for final OOS confirmation; failure promotes no candidate.

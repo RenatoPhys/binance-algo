@@ -30,6 +30,7 @@ from binance_algo.research.strategies.base import PanelFittedStrategy, PanelStra
 from binance_algo.research.visualization import render_pnl_svg
 
 HOURS_PER_YEAR = 24 * 365
+ACCOUNTING_FEATURE_FIELDS = ("rolling_beta",)
 ACCOUNTING_OUTCOME_FIELDS = (
     "future_return_1h",
     "future_residual_return_1h",
@@ -42,6 +43,12 @@ ACCOUNTING_METADATA_FIELDS = (
     "label_end_time_ms",
 )
 ACCOUNTING_FIELDS = ("rolling_beta", *ACCOUNTING_OUTCOME_FIELDS, *ACCOUNTING_METADATA_FIELDS)
+
+
+def accounting_feature_columns(feature_columns: tuple[str, ...]) -> tuple[str, ...]:
+    """Include analytical fields required by accounting regardless of strategy policy."""
+
+    return tuple(dict.fromkeys((*feature_columns, *ACCOUNTING_FEATURE_FIELDS)))
 
 
 def accounting_metadata_columns(
@@ -499,8 +506,12 @@ def run_walk_forward(
     if signal_delay_bars < 0:
         raise ResearchError("signal delay cannot be negative")
     if panel_data is None:
-        feature_columns = tuple(
-            dict.fromkeys((*strategy.required_features(), *portfolio_policy.required_features()))
+        feature_columns = accounting_feature_columns(
+            tuple(
+                dict.fromkeys(
+                    (*strategy.required_features(), *portfolio_policy.required_features())
+                )
+            )
         )
         panel_data = PanelData.from_frame(
             frame,
@@ -640,16 +651,18 @@ def run_research_validation(
     if profile is ValidationProfile.DISCOVERY and configured_strategy_stress:
         raise ResearchError("discovery does not run additional strategy stress scenarios")
     if panel_data is None:
-        feature_columns = tuple(
-            dict.fromkeys(
-                (
-                    *strategy.required_features(),
-                    *portfolio_policy.required_features(),
-                    *(
-                        feature
-                        for stress_strategy in configured_strategy_stress.values()
-                        for feature in stress_strategy.required_features()
-                    ),
+        feature_columns = accounting_feature_columns(
+            tuple(
+                dict.fromkeys(
+                    (
+                        *strategy.required_features(),
+                        *portfolio_policy.required_features(),
+                        *(
+                            feature
+                            for stress_strategy in configured_strategy_stress.values()
+                            for feature in stress_strategy.required_features()
+                        ),
+                    )
                 )
             )
         )
@@ -744,16 +757,18 @@ def run_and_persist_backtest(
     strategy_stress: Mapping[str, Strategy],
     generate_chart: bool = False,
 ) -> ResearchBacktestResult:
-    feature_columns = tuple(
-        dict.fromkeys(
-            (
-                *strategy.required_features(),
-                *portfolio_policy.required_features(),
-                *(
-                    feature
-                    for stress_strategy in strategy_stress.values()
-                    for feature in stress_strategy.required_features()
-                ),
+    feature_columns = accounting_feature_columns(
+        tuple(
+            dict.fromkeys(
+                (
+                    *strategy.required_features(),
+                    *portfolio_policy.required_features(),
+                    *(
+                        feature
+                        for stress_strategy in strategy_stress.values()
+                        for feature in stress_strategy.required_features()
+                    ),
+                )
             )
         )
     )

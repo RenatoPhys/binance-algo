@@ -21,6 +21,7 @@ from binance_algo.config import FeeScheduleConfig, ResearchConfig
 from binance_algo.data.storage import LocalFilesystemStorage
 from binance_algo.research.backtest import (
     ACCOUNTING_OUTCOME_FIELDS,
+    accounting_feature_columns,
     accounting_metadata_columns,
     run_research_validation,
 )
@@ -375,9 +376,11 @@ class ExperimentRunner:
                 spec.portfolio_policy.version,
                 spec.portfolio_parameters,
             )
-            feature_columns = tuple(
-                dict.fromkeys(
-                    (*strategy.required_features(), *portfolio_policy.required_features())
+            feature_columns = accounting_feature_columns(
+                tuple(
+                    dict.fromkeys(
+                        (*strategy.required_features(), *portfolio_policy.required_features())
+                    )
                 )
             )
             loaded_dataset = WORKER_DATASET_CACHE.load(
