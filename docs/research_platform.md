@@ -218,6 +218,50 @@ performance líquida, folds, concentrações, estresses, vizinhança, DSR/PBO e 
 uma lockbox legítima. O estado é `NOT_AVAILABLE`, e promoção para Fase 4 fica bloqueada até existir
 dataset/período independente e evento `LOCKBOX_EVALUATED` aprovado.
 
+## Portfólios declarados de estratégias e dashboard v2
+
+Um strategy portfolio é uma visão derivada de runs OOS já concluídos. Ele não substitui a
+`PortfolioPolicy`: a policy converte scores de uma estratégia em pesos por símbolo dentro do
+backtest; o strategy portfolio distribui capital entre várias sleeves após os experimentos. O
+contrato YAML v1 é estrito, imutável após o parse e documentado em
+`configs/research_strategy_portfolios.schema.json`.
+
+Cada componente referencia `experiment_id` e opcionalmente `run_id`. Sem `run_id`, o loader usa o
+sucesso mais recente que passe verificação integral, nunca o run com melhor métrica. Os paths vêm
+exclusivamente do registry; OOS, métricas por mês/fold/regime/símbolo e checksums são obrigatórios.
+O loader rejeita timestamps/folds desordenados, não finitos, equity não positiva, turnover
+negativo, `weights_json` instável e reconciliação fora de `1e-10`.
+
+O modo `sleeve` combina retornos já líquidos, sem netting entre estratégias. O modo `netted`
+combina os pesos-alvo por símbolo, reconstrói rebalanceamentos e fechamento flat por fold, e
+aplica uma vez fees, meio spread e slippage por meio do mesmo helper puro usado no backtest. As
+duas visões são sempre calculadas e reconciliadas para permitir comparação transparente.
+
+O dashboard HTML/JSON é estático, offline e determinístico. Métricas são calculadas no grid OOS
+completo em Python; JavaScript controla apenas filtros, ordenação, portfólio selecionado e
+visibilidade de séries. O snapshot inclui runs/digests/checksums, cobertura de alinhamento,
+performance, drawdowns, attribution, concentração, correlações diária/gross/active-only,
+similaridade de posições, eventos/legs simulados e cortes por mês/fold/regime. Um portfólio
+inválido fica isolado e não remove o catálogo ou os outros portfólios.
+
+Fluxo local recomendado:
+
+```bash
+uv run binance-algo --config configs/research.yaml research portfolio inventory
+uv run binance-algo --config configs/research.yaml research portfolio scaffold \
+  --experiment-id <id_1> --experiment-id <id_2> \
+  --output var/config/research_strategy_portfolios.yaml
+uv run binance-algo --config configs/research.yaml research portfolio validate \
+  --file var/config/research_strategy_portfolios.yaml
+uv run binance-algo --config configs/research.yaml research dashboard build \
+  --portfolio-file var/config/research_strategy_portfolios.yaml --open
+```
+
+O inventário, a configuração operacional e o dashboard ficam em `var/` e não entram em digests
+científicos. Pesos `fixed` devem somar exatamente um; `equal_weight` proíbe pesos manuais. Não há
+otimizador, seleção automática, servidor web, lockbox nova, promoção automática ou integração com
+trading.
+
 ## Próximos incrementos
 
 1. ampliar histórico e capturar metadata point-in-time para um universo dinâmico legítimo;

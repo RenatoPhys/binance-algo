@@ -1,0 +1,29 @@
+# Documentation-only scaffold. Replace every placeholder with an experiment_id from
+# `research portfolio inventory`; this file is not used by tests or production builds.
+schema_version: 1
+portfolios:
+  - portfolio_id: declared_research_example
+    title: Declared research example
+    description: >-
+      Exploratory weights declared before viewing the combined portfolio result. This is not
+      independent validation, a promoted strategy, or authorization to trade.
+    accounting_mode: netted
+    weighting: fixed
+    components:
+      - experiment_id: REPLACE_WITH_VERIFIED_EXPERIMENT_ID_1
+        label: Research sleeve one
+        capital_weight: 0.60
+      - experiment_id: REPLACE_WITH_VERIFIED_EXPERIMENT_ID_2
+        label: Research sleeve two
+        capital_weight: 0.40
+    alignment:
+      policy: strict
+      require_same_dataset: true
+      require_same_label: true
+      require_same_execution_model: true
+      require_same_cost_model: true
+      require_same_split_plan: true
+    analytics:
+      correlation_frequency: daily
+      rolling_windows_hours: [720, 2160]
+      trade_epsilon: 1.0e-10
