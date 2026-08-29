@@ -7,7 +7,6 @@ import socket
 import traceback
 from collections.abc import Mapping
 from dataclasses import dataclass
-from decimal import Decimal
 from pathlib import Path
 from threading import Event, Thread
 from types import TracebackType
@@ -17,7 +16,7 @@ import orjson
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
 
 from binance_algo.common.errors import ResearchError
-from binance_algo.config import FeeScheduleConfig, ResearchConfig
+from binance_algo.config import ResearchConfig
 from binance_algo.data.storage import LocalFilesystemStorage
 from binance_algo.research.backtest import (
     ACCOUNTING_OUTCOME_FIELDS,
@@ -26,6 +25,7 @@ from binance_algo.research.backtest import (
     run_research_validation,
 )
 from binance_algo.research.contracts import ValidationProfile
+from binance_algo.research.costs import CostParameters
 from binance_algo.research.datasets.references import (
     DatasetReference,
     load_dataset_reference,
@@ -64,13 +64,6 @@ class _StrictParameters(BaseModel):
 
 class ExecutionParameters(_StrictParameters):
     lag_bars: int = Field(default=1, ge=1, le=1)
-
-
-class CostParameters(_StrictParameters):
-    spread_bps: Decimal = Field(ge=0, le=100)
-    slippage_bps: Decimal = Field(ge=0, le=100)
-    initial_capital_usdt: Decimal = Field(gt=0)
-    fee_schedule: FeeScheduleConfig
 
 
 class SplitParameters(_StrictParameters):
