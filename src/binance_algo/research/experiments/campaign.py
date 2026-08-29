@@ -31,7 +31,7 @@ from binance_algo.research.experiments.models import (
     VersionedComponent,
 )
 from binance_algo.research.experiments.provenance import build_code_fingerprint
-from binance_algo.research.features.registry import phase3_feature_set
+from binance_algo.research.features.registry import builtin_feature_plan
 from binance_algo.research.labels.forward_returns import PHASE3_LABEL_REGISTRY
 from binance_algo.research.portfolio.registry import build_portfolio_policy
 from binance_algo.research.strategies.registry import build_strategy
@@ -326,7 +326,11 @@ def plan_campaign(
 ) -> CampaignPlan:
     manifest_path = _manifest_path(source, project_root, data_root)
     dataset_reference = load_dataset_reference(manifest_path)
-    feature_set = phase3_feature_set(research_config)
+    feature_set = builtin_feature_plan(
+        source.feature_set.name,
+        source.feature_set.version,
+        config=research_config,
+    ).feature_set
     declared_version = (
         source.feature_set.version
         if source.feature_set.version.startswith("v")
@@ -334,7 +338,7 @@ def plan_campaign(
     )
     declared_feature_set_id = f"{source.feature_set.name}:{declared_version}"
     if declared_feature_set_id != feature_set.feature_set_id:
-        raise ResearchError(f"unsupported feature set: {declared_feature_set_id}")
+        raise ResearchError(f"feature-set identity mismatch: {declared_feature_set_id}")
     if dataset_reference.feature_set_id != feature_set.feature_set_id:
         raise ResearchError("campaign feature set differs from the dataset manifest")
     label = _label_identity(source.label)

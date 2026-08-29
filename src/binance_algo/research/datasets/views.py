@@ -30,7 +30,11 @@ def build_feature_view(
     names = tuple(required_features)
     for name in names:
         feature_registry.resolve_name(name)
-        if schema.role_for(name) is not ColumnRole.FEATURE:
+        try:
+            role = schema.role_for(name)
+        except ResearchError:
+            role = ColumnRole.FEATURE
+        if role is not ColumnRole.FEATURE:
             raise ResearchError(f"scoring column is not a FEATURE: {name}")
     return select_feature_view(frame, required_features=names)
 

@@ -1,0 +1,17 @@
+hypothesis_id: HYP-FLOWABS-0001
+title: Aggressive-flow absorption reversal
+mechanism: >-
+  Extreme aggressive taker flow that produces a weak or contrary volatility-scaled price
+  response identifies absorption and a short-lived reversal against the aggressor side.
+expected_direction: opposite the sign of extreme aggressive flow after failed price impact
+expected_horizon: 4 to 8 hours
+target_universe: fixed BTCUSDT, ETHUSDT and SOLUSDT development_seen universe
+preregistered_success_criteria:
+  wave1_gate: standalone_or_diversifier
+  maximum_trials: 4
+  maximum_daily_correlation_to_quarter_hour_flow: "0.80"
+  promotion_allowed: false
+status: READY
+notes: >-
+  EXPLORATORY / DEVELOPMENT_SEEN — the historical window has already informed prior research
+  decisions and is not an independent lockbox. The absorption definition is frozen for v1.

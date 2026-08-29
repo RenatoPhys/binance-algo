@@ -76,6 +76,8 @@ class FeatureComputeContext:
     symbols: tuple[str, ...]
     decision_indices: np.ndarray[Any, np.dtype[np.int64]]
     decision_times: np.ndarray[Any, np.dtype[np.int64]]
+    open_times: np.ndarray[Any, np.dtype[np.int64]]
+    log_open: FeatureArray
     log_close: FeatureArray
     minute_log_returns: FeatureArray
     highs: FeatureArray

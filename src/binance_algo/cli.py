@@ -73,6 +73,7 @@ from binance_algo.doctor import run_doctor
 from binance_algo.exchange.binance_usdm.rest import BinanceUSDMRestClient
 from binance_algo.logging import configure_logging, get_logger
 from binance_algo.observability.metrics import RecorderMetrics
+from binance_algo.research.alpha_reboot_report import build_alpha_reboot_wave1_report
 from binance_algo.research.dashboard import build_research_dashboard
 from binance_algo.research.dataset import build_and_persist_research_dataset
 from binance_algo.research.datasets.references import load_dataset_reference
@@ -1565,6 +1566,45 @@ def research_reject(
     console.print(f"Rejection event: {event.promotion_id} [{event.to_stage.value}]")
 
 
+@research_app.command("wave1-report")
+def research_wave1_report(
+    ctx: typer.Context,
+    file: Annotated[
+        Path,
+        typer.Option(
+            "--file",
+            help="Strict Alpha Reboot Wave 1 YAML file.",
+            exists=True,
+            dir_okay=False,
+        ),
+    ] = Path("configs/alpha_reboot_wave1.yaml"),
+) -> None:
+    """Build the strict 18-trial Alpha Reboot Wave 1 report."""
+
+    try:
+        settings = _settings(ctx)
+        _configure(settings)
+        store = ResearchStore(settings.research_db_path)
+        store.initialize()
+        result = build_alpha_reboot_wave1_report(
+            store=store,
+            config_path=file,
+            project_root=settings.project_root,
+            data_root=settings.data_root,
+            reports_root=settings.reports_root,
+            compression=settings.storage.parquet_compression,
+        )
+    except (BinanceAlgoError, OSError, pl.exceptions.PolarsError) as exc:
+        _fail(exc if isinstance(exc, BinanceAlgoError) else ResearchError(str(exc)))
+    console.print(
+        f"Alpha Reboot Wave 1: trials={result.trial_count}\n"
+        f"Champion run: {result.champion_run_id}\n"
+        f"Report: {result.report_markdown_path}\n"
+        f"Candidates: {result.candidates_path}\n"
+        f"Correlations: {result.daily_return_correlation_path}"
+    )
+
+
 @research_app.command("build")
 def research_build(
     ctx: typer.Context,
@@ -1573,6 +1613,10 @@ def research_build(
     symbols: Annotated[str, typer.Option(help="Comma-separated fixed seed symbols.")] = (
         "BTCUSDT,ETHUSDT,SOLUSDT"
     ),
+    feature_set: Annotated[
+        str,
+        typer.Option(help="Registered feature-set identity, for example alpha_reboot_features:v1."),
+    ] = "phase3_baseline_features:v1",
 ) -> None:
     """Build and audit the causal point-in-time research dataset."""
 
@@ -1580,6 +1624,10 @@ def research_build(
         settings = _settings(ctx)
         _configure(settings)
         parsed_symbols = parse_symbols(symbols)
+        try:
+            feature_set_name, feature_set_version = feature_set.rsplit(":", 1)
+        except ValueError as exc:
+            raise typer.BadParameter("--feature-set must be NAME:VERSION") from exc
         start_ms, end_ms = _date_range_ms(start, end)
         result = build_and_persist_research_dataset(
             database_path=settings.duckdb_path,
@@ -1590,6 +1638,8 @@ def research_build(
             end_time_ms=end_ms,
             config=settings.research,
             compression=settings.storage.parquet_compression,
+            feature_set_name=feature_set_name,
+            feature_set_version=feature_set_version,
         )
     except BinanceAlgoError as exc:
         _fail(exc)

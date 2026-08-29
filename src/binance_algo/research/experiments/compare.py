@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 import uuid
 from dataclasses import dataclass
+from html import escape
 from pathlib import Path
 from typing import Any, cast
 
@@ -13,6 +14,7 @@ import orjson
 import polars as pl
 
 from binance_algo.common.errors import ResearchError
+from binance_algo.research.experiments.artifacts import DEVELOPMENT_SEEN_BANNER
 from binance_algo.research.experiments.models import MetricScope
 from binance_algo.research.experiments.store import CampaignRecord, ResearchStore
 
@@ -26,6 +28,7 @@ class CampaignComparisonResult:
     trial_count: int
     succeeded_count: int
     failed_count: int
+    report_html_path: Path | None = None
 
 
 def _distribution(values: list[float]) -> dict[str, float]:
@@ -139,6 +142,7 @@ def build_campaign_comparison(store: ResearchStore, campaign: CampaignRecord) ->
                 "profitable_folds": sum(value > 0 for value in fold_returns),
                 "fold_count": len(fold_returns),
                 "cost_1_5x_return": stress.get(("cost_1_5x", "total_return")),
+                "cost_2_0x_return": stress.get(("cost_2_0x", "total_return")),
                 "delay_1_bar_return": stress.get(("signal_delay_1_bar", "total_return")),
                 "status": latest.status.value if latest is not None else "NOT_RUN",
                 "attempts": len(runs),
@@ -172,8 +176,13 @@ def write_campaign_comparison(
     comparison_path = directory / "comparison.parquet"
     report_json_path = directory / "report.json"
     report_markdown_path = directory / "report.md"
+    report_html_path = directory / "report.html"
     succeeded = frame.filter(pl.col("status") == "SUCCEEDED").height
     failed = frame.filter(pl.col("status").is_in(["FAILED", "CANCELLED", "STALE"])).height
+    stored = orjson.loads(campaign.spec_json)
+    source_spec = stored.get("source_spec", {})
+    feature_set = source_spec.get("feature_set", {})
+    development_seen = feature_set.get("name") == "alpha_reboot_features"
     payload = {
         "campaign_id": campaign.campaign_id,
         "name": campaign.name,
@@ -181,11 +190,13 @@ def write_campaign_comparison(
         "trial_count": frame.height,
         "succeeded_count": succeeded,
         "failed_count": failed,
-        "planning": orjson.loads(campaign.spec_json).get("planning", {}),
+        "planning": stored.get("planning", {}),
         "sharpe_distribution": _distribution(frame["sharpe"].drop_nulls().to_list()),
         "return_distribution": _distribution(frame["total_return"].drop_nulls().to_list()),
         "trials": frame.to_dicts(),
     }
+    if development_seen:
+        payload["research_banner"] = DEVELOPMENT_SEEN_BANNER
     _atomic_replace_parquet(comparison_path, frame, compression=compression)
     _atomic_replace_bytes(
         report_json_path,
@@ -194,6 +205,7 @@ def write_campaign_comparison(
     lines = [
         f"# Campaign — {campaign.name}",
         "",
+        *([f"> {DEVELOPMENT_SEEN_BANNER}", ""] if development_seen else []),
         f"- Campaign ID: `{campaign.campaign_id}`",
         f"- Status: {campaign.status.value}",
         f"- Trials / succeeded / failed: {frame.height} / {succeeded} / {failed}",
@@ -214,6 +226,29 @@ def write_campaign_comparison(
             f"{sharpe} | {worst_fold} | {cost_stress} | {row['status']} |"
         )
     _atomic_replace_bytes(report_markdown_path, ("\n".join(lines) + "\n").encode())
+    html_banner = (
+        f'<p class="research-banner">{escape(DEVELOPMENT_SEEN_BANNER)}</p>'
+        if development_seen
+        else ""
+    )
+    html_rows = "".join(
+        "<tr>"
+        f"<td>{escape(str(row['rank'] or '-'))}</td>"
+        f"<td>{escape(str(row['experiment_id']))}</td>"
+        f"<td>{escape(str(row['total_return']))}</td>"
+        f"<td>{escape(str(row['sharpe']))}</td>"
+        f"<td>{escape(str(row['status']))}</td>"
+        "</tr>"
+        for row in frame.to_dicts()
+    )
+    html = (
+        '<!doctype html><html><head><meta charset="utf-8"><title>'
+        f"{escape(campaign.name)}</title></head><body><h1>{escape(campaign.name)}</h1>"
+        f"{html_banner}<table><thead><tr><th>Rank</th><th>Experiment</th>"
+        "<th>Return</th><th>Sharpe</th><th>Status</th></tr></thead>"
+        f"<tbody>{html_rows}</tbody></table></body></html>"
+    )
+    _atomic_replace_bytes(report_html_path, html.encode("utf-8"))
     return CampaignComparisonResult(
         campaign_id=campaign.campaign_id,
         comparison_path=comparison_path,
@@ -222,6 +257,7 @@ def write_campaign_comparison(
         trial_count=frame.height,
         succeeded_count=succeeded,
         failed_count=failed,
+        report_html_path=report_html_path,
     )
 
 

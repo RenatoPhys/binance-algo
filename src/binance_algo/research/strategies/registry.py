@@ -33,6 +33,10 @@ from binance_algo.research.strategies.donchian_breakout import (
     DonchianBreakoutParameters,
     DonchianBreakoutStrategy,
 )
+from binance_algo.research.strategies.flow_absorption import (
+    FlowAbsorptionParameters,
+    FlowAbsorptionStrategy,
+)
 from binance_algo.research.strategies.funding_carry import (
     FundingCarryParameters,
     FundingCarryStrategy,
@@ -48,6 +52,14 @@ from binance_algo.research.strategies.market_regime_trend import (
 from binance_algo.research.strategies.multi_horizon_trend import (
     MultiHorizonTrendParameters,
     MultiHorizonTrendStrategy,
+)
+from binance_algo.research.strategies.pair_spread_reversion import (
+    PairSpreadReversionParameters,
+    PairSpreadReversionStrategy,
+)
+from binance_algo.research.strategies.quarter_hour_flow import (
+    QuarterHourFlowParameters,
+    QuarterHourFlowStrategy,
 )
 from binance_algo.research.strategies.relative_strength import (
     RelativeStrengthParameters,
@@ -66,6 +78,10 @@ from binance_algo.research.strategies.sma_crossover import (
     SmaCrossoverStrategy,
 )
 from binance_algo.research.strategies.sma_trend_strength import SmaTrendStrengthStrategy
+from binance_algo.research.strategies.volatility_compression_breakout import (
+    VolatilityCompressionBreakoutParameters,
+    VolatilityCompressionBreakoutStrategy,
+)
 from binance_algo.research.strategies.volatility_filtered_sma import (
     VolatilityFilteredSmaParameters,
     VolatilityFilteredSmaStrategy,
@@ -164,7 +180,77 @@ class VolatilityFilteredSmaSpec(SmaCrossoverSpec):
     maximum_volatility_quantile: float = Field(ge=0.25, le=0.90)
 
 
+class QuarterHourFlowSpec(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    aggregation_hours: int
+    hold_hours: int
+
+
+class FlowAbsorptionSpec(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    flow_z_threshold: float
+    hold_hours: int
+
+
+class VolatilityCompressionBreakoutSpec(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    compression_quantile: float
+    hold_hours: int
+
+
+class PairSpreadReversionSpec(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    spread_z_window_hours: int
+    entry_z: float
+
+
 StrategyFactory = Callable[[Mapping[str, Any]], Strategy]
+
+
+def build_quarter_hour_flow(parameters: Mapping[str, Any]) -> QuarterHourFlowStrategy:
+    try:
+        parsed = QuarterHourFlowSpec.model_validate(dict(parameters))
+        return QuarterHourFlowStrategy(parameters=QuarterHourFlowParameters(**parsed.model_dump()))
+    except (TypeError, ValueError, ResearchError) as exc:
+        raise ResearchError(f"invalid quarter_hour_flow parameters: {exc}") from exc
+
+
+def build_flow_absorption_reversal(
+    parameters: Mapping[str, Any],
+) -> FlowAbsorptionStrategy:
+    try:
+        parsed = FlowAbsorptionSpec.model_validate(dict(parameters))
+        return FlowAbsorptionStrategy(parameters=FlowAbsorptionParameters(**parsed.model_dump()))
+    except (TypeError, ValueError, ResearchError) as exc:
+        raise ResearchError(f"invalid flow_absorption_reversal parameters: {exc}") from exc
+
+
+def build_volatility_compression_breakout(
+    parameters: Mapping[str, Any],
+) -> VolatilityCompressionBreakoutStrategy:
+    try:
+        parsed = VolatilityCompressionBreakoutSpec.model_validate(dict(parameters))
+        return VolatilityCompressionBreakoutStrategy(
+            parameters=VolatilityCompressionBreakoutParameters(**parsed.model_dump())
+        )
+    except (TypeError, ValueError, ResearchError) as exc:
+        raise ResearchError(f"invalid volatility_compression_breakout parameters: {exc}") from exc
+
+
+def build_pair_spread_reversion(
+    parameters: Mapping[str, Any],
+) -> PairSpreadReversionStrategy:
+    try:
+        parsed = PairSpreadReversionSpec.model_validate(dict(parameters))
+        return PairSpreadReversionStrategy(
+            parameters=PairSpreadReversionParameters(**parsed.model_dump())
+        )
+    except (TypeError, ValueError, ResearchError) as exc:
+        raise ResearchError(f"invalid pair_spread_reversion parameters: {exc}") from exc
 
 
 def build_donchian_breakout(parameters: Mapping[str, Any]) -> DonchianBreakoutStrategy:
@@ -338,6 +424,14 @@ def build_volatility_filtered_sma(parameters: Mapping[str, Any]) -> VolatilityFi
 
 
 STRATEGY_FACTORIES: dict[tuple[str, str], StrategyFactory] = {
+    ("flow_absorption_reversal", "1"): build_flow_absorption_reversal,
+    ("flow_absorption_reversal", "v1"): build_flow_absorption_reversal,
+    ("pair_spread_reversion", "1"): build_pair_spread_reversion,
+    ("pair_spread_reversion", "v1"): build_pair_spread_reversion,
+    ("quarter_hour_flow", "1"): build_quarter_hour_flow,
+    ("quarter_hour_flow", "v1"): build_quarter_hour_flow,
+    ("volatility_compression_breakout", "1"): build_volatility_compression_breakout,
+    ("volatility_compression_breakout", "v1"): build_volatility_compression_breakout,
     ("carry_consensus_strength", "1"): build_carry_consensus_strength,
     ("carry_consensus_strength", "v1"): build_carry_consensus_strength,
     ("carry_dual_trend", "1"): build_carry_dual_trend,
@@ -392,15 +486,19 @@ __all__ = [
     "CarryMultiRegimeSpec",
     "CarryRelativeStrengthSpec",
     "DonchianBreakoutSpec",
+    "FlowAbsorptionSpec",
     "FundingCarrySpec",
     "LinearCrossSectionalSpec",
     "MarketRegimeTrendSpec",
     "MultiHorizonTrendSpec",
+    "PairSpreadReversionSpec",
+    "QuarterHourFlowSpec",
     "RelativeStrengthSpec",
     "ResidualMeanReversionSpec",
     "ResidualMomentumSpec",
     "SmaCrossoverSpec",
     "StrategyFactory",
+    "VolatilityCompressionBreakoutSpec",
     "VolatilityFilteredSmaSpec",
     "build_carry_consensus_strength",
     "build_carry_dual_trend",
@@ -408,15 +506,19 @@ __all__ = [
     "build_carry_multi_regime",
     "build_carry_relative_strength",
     "build_donchian_breakout",
+    "build_flow_absorption_reversal",
     "build_funding_carry",
     "build_linear_cross_sectional",
     "build_market_regime_trend",
     "build_multi_horizon_trend",
+    "build_pair_spread_reversion",
+    "build_quarter_hour_flow",
     "build_relative_strength",
     "build_residual_mean_reversion",
     "build_residual_momentum",
     "build_sma_crossover",
     "build_sma_trend_strength",
     "build_strategy",
+    "build_volatility_compression_breakout",
     "build_volatility_filtered_sma",
 ]

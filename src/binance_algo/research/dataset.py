@@ -25,11 +25,16 @@ from binance_algo.research.datasets.fingerprints import (
     logical_content_checksum,
     sha256_path,
 )
-from binance_algo.research.datasets.schemas import RESEARCH_DATASET_SCHEMA_V2
+from binance_algo.research.datasets.schemas import (
+    RESEARCH_DATASET_SCHEMA_V2,
+    research_dataset_schema,
+)
 from binance_algo.research.features.base import FeatureComputeContext
 from binance_algo.research.features.registry import (
     PHASE3_FEATURE_REGISTRY,
     FeatureSetSpec,
+    ResolvedFeaturePlan,
+    builtin_feature_plan,
     compute_feature_plan,
     phase3_feature_plan,
     phase3_feature_set,
@@ -43,9 +48,6 @@ MINUTE_MS = 60_000
 HOUR_MINUTES = 60
 DAY_MINUTES = 1_440
 DATASET_SCHEMA_VERSION = RESEARCH_DATASET_SCHEMA_V2.version
-FEATURE_DEFINITIONS = tuple(
-    definition.to_manifest() for definition in PHASE3_FEATURE_REGISTRY.definitions()
-)
 
 
 @dataclass(frozen=True, slots=True)
@@ -229,6 +231,7 @@ def build_point_in_time_frame(
     funding: pl.DataFrame,
     symbols: tuple[str, ...],
     config: ResearchConfig,
+    feature_plan: ResolvedFeaturePlan | None = None,
 ) -> tuple[pl.DataFrame, DatasetAudit, str, str]:
     """Create one causal row per decision time and symbol with future-only labels."""
 
@@ -242,7 +245,10 @@ def build_point_in_time_frame(
     close_times = np.asarray(first["close_time_ms"].to_numpy(), dtype=np.int64)
     decision_stride = config.decision_interval_minutes
     minimum_lookback = DAY_MINUTES
+    resolved_plan = feature_plan or phase3_feature_plan(config)
     source_lookback = max(DAY_MINUTES, config.beta_window_hours * HOUR_MINUTES)
+    if resolved_plan.feature_set.feature_set_id == "alpha_reboot_features:v1":
+        source_lookback = max(source_lookback, 168 * HOUR_MINUTES)
     horizon = config.forward_horizon_minutes
     minute_numbers = open_times // MINUTE_MS
     decision_indices = np.flatnonzero(minute_numbers % decision_stride == decision_stride - 1)
@@ -283,16 +289,18 @@ def build_point_in_time_frame(
     ):
         raise ResearchError("research prices must be finite and positive")
 
+    log_open = np.log(opens)
     log_close = np.log(closes)
     minute_log_returns = np.full_like(log_close, np.nan)
     minute_log_returns[1:] = np.diff(log_close, axis=0)
     decision_times = close_times[decision_indices]
-    feature_plan = phase3_feature_plan(config)
     feature_outputs = compute_feature_plan(
         FeatureComputeContext(
             symbols=symbols,
             decision_indices=decision_indices,
             decision_times=decision_times,
+            open_times=open_times,
+            log_open=log_open,
             log_close=log_close,
             minute_log_returns=minute_log_returns,
             highs=highs,
@@ -302,9 +310,10 @@ def build_point_in_time_frame(
             funding=funding,
             prior_outputs={},
         ),
-        feature_plan,
+        resolved_plan,
     )
-    feature_names = RESEARCH_DATASET_SCHEMA_V2.feature_columns()
+    feature_names = tuple(resolved_plan.feature_set.feature_ids)
+    feature_names = tuple(name.rsplit(":", 1)[0] for name in feature_names)
     if set(feature_outputs) != set(feature_names):
         raise ResearchError("configured bundle outputs differ from the research dataset schema")
     hourly_returns = feature_outputs["log_return_1h"]
@@ -338,7 +347,8 @@ def build_point_in_time_frame(
             label_end_times=open_times[label_end_indices],
         )
 
-    feature_version = feature_plan.feature_set.canonical_checksum[:16]
+    schema = research_dataset_schema(feature_names)
+    feature_version = resolved_plan.feature_set.canonical_checksum[:16]
     universe_version = _universe_version(symbols)
     rows: list[dict[str, object]] = []
     for row_index, minute_index in enumerate(decision_indices):
@@ -374,7 +384,7 @@ def build_point_in_time_frame(
                     "outcome_quote_volume_1h": float(outcome_quote_volume[row_index, symbol_index]),
                     "outcome_funding_rate_1h": float(outcome_funding[row_index, symbol_index]),
                     "execution_lag_bars": 1,
-                    "dataset_schema_version": DATASET_SCHEMA_VERSION,
+                    "dataset_schema_version": schema.version,
                 }
             )
     if not rows:
@@ -386,21 +396,29 @@ def build_point_in_time_frame(
         on="decision_time_ms",
         how="inner",
     ).sort("decision_time_ms", "symbol")
-    audit = audit_point_in_time_frame(frame, symbols=symbols)
+    audit = audit_point_in_time_frame(
+        frame,
+        symbols=symbols,
+        feature_columns=feature_names,
+    )
     if not audit.passed:
         raise ResearchError(f"point-in-time dataset audit failed: {audit}")
     return frame, audit, feature_version, universe_version
 
 
-def audit_point_in_time_frame(frame: pl.DataFrame, *, symbols: tuple[str, ...]) -> DatasetAudit:
-    feature_columns = [
-        column for column in frame.columns if column in RESEARCH_DATASET_SCHEMA_V2.feature_columns()
-    ]
+def audit_point_in_time_frame(
+    frame: pl.DataFrame,
+    *,
+    symbols: tuple[str, ...],
+    feature_columns: tuple[str, ...] | None = None,
+) -> DatasetAudit:
+    declared_features = feature_columns or RESEARCH_DATASET_SCHEMA_V2.feature_columns()
+    audited_feature_columns = [column for column in frame.columns if column in declared_features]
     duplicate_count = frame.select(
         pl.struct("decision_time_ms", "symbol").is_duplicated().sum()
     ).item()
     null_feature_count = frame.select(
-        pl.sum_horizontal([pl.col(column).is_null().sum() for column in feature_columns])
+        pl.sum_horizontal([pl.col(column).is_null().sum() for column in audited_feature_columns])
     ).item()
     feature_after = frame.filter(
         pl.col("feature_source_max_ms") > pl.col("decision_time_ms")
@@ -445,6 +463,14 @@ def persist_research_dataset(
     symbols: tuple[str, ...],
     config: ResearchConfig,
 ) -> ResearchDatasetResult:
+    feature_names = tuple(feature_id.rsplit(":", 1)[0] for feature_id in feature_set.feature_ids)
+    dataset_schema = research_dataset_schema(feature_names)
+    definitions_by_id = {
+        definition.feature_id: definition for definition in PHASE3_FEATURE_REGISTRY.definitions()
+    }
+    feature_definitions = tuple(
+        definitions_by_id[feature_id].to_manifest() for feature_id in feature_set.feature_ids
+    )
     builder_parameters = {
         "decision_interval_minutes": config.decision_interval_minutes,
         "forward_horizon_minutes": config.forward_horizon_minutes,
@@ -453,7 +479,7 @@ def persist_research_dataset(
     }
     fingerprint_payload = build_lineage_payload(
         input_files=input_files,
-        dataset_schema_version=DATASET_SCHEMA_VERSION,
+        dataset_schema_version=dataset_schema.version,
         universe_version=universe_version,
         symbols=symbols,
         start_time_ms=source_start_time_ms,
@@ -482,8 +508,8 @@ def persist_research_dataset(
         {
             "dataset_id": dataset_id,
             "dataset_version": dataset_version,
-            "dataset_schema_version": DATASET_SCHEMA_VERSION,
-            "dataset_schema": RESEARCH_DATASET_SCHEMA_V2.to_manifest(),
+            "dataset_schema_version": dataset_schema.version,
+            "dataset_schema": dataset_schema.to_manifest(),
             "fingerprint_method": FINGERPRINT_METHOD,
             "fingerprint_payload": fingerprint_payload,
             "content_checksum": content_checksum,
@@ -499,7 +525,7 @@ def persist_research_dataset(
             "universe_version": universe_version,
             "universe_policy": "fixed seed chosen ex ante by the project specification",
             "symbols": symbols,
-            "feature_definitions": FEATURE_DEFINITIONS,
+            "feature_definitions": feature_definitions,
             "label_id": GROSS_FORWARD_RETURN_1H.label_id,
             "label_definition": GROSS_FORWARD_RETURN_1H.to_manifest(),
             "available_label_definitions": tuple(
@@ -535,7 +561,14 @@ def build_and_persist_research_dataset(
     end_time_ms: int,
     config: ResearchConfig,
     compression: str,
+    feature_set_name: str = "phase3_baseline_features",
+    feature_set_version: str = "v1",
 ) -> ResearchDatasetResult:
+    feature_plan = builtin_feature_plan(
+        feature_set_name,
+        feature_set_version,
+        config=config,
+    )
     input_files = collect_research_lineage(
         state_db_path=state_db_path,
         symbols=symbols,
@@ -555,11 +588,12 @@ def build_and_persist_research_dataset(
         funding=funding,
         symbols=symbols,
         config=config,
+        feature_plan=feature_plan,
     )
     return persist_research_dataset(
         frame=frame,
         audit=audit,
-        feature_set=phase3_feature_set(config),
+        feature_set=feature_plan.feature_set,
         universe_version=universe_version,
         input_files=input_files,
         source_start_time_ms=start_time_ms,

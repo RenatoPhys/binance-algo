@@ -72,4 +72,37 @@ RESEARCH_DATASET_SCHEMA_V2 = DatasetSchema(
 )
 
 
-__all__ = ["RESEARCH_DATASET_SCHEMA_V2", "ColumnRole", "DatasetSchema"]
+def research_dataset_schema(feature_columns: tuple[str, ...]) -> DatasetSchema:
+    """Build the explicit schema for a registered feature set without changing v2."""
+
+    if feature_columns == PHASE3_FEATURE_NAMES:
+        return RESEARCH_DATASET_SCHEMA_V2
+    return DatasetSchema(
+        version=3,
+        column_roles={
+            "decision_time_ms": ColumnRole.KEY,
+            "symbol": ColumnRole.KEY,
+            **{name: ColumnRole.FEATURE for name in feature_columns},
+            "future_return_1h": ColumnRole.TARGET,
+            "future_residual_return_1h": ColumnRole.TARGET,
+            "outcome_quote_volume_1h": ColumnRole.OUTCOME,
+            "outcome_funding_rate_1h": ColumnRole.OUTCOME,
+            "feature_cutoff_ms": ColumnRole.METADATA,
+            "feature_source_min_ms": ColumnRole.METADATA,
+            "feature_source_max_ms": ColumnRole.METADATA,
+            "execution_time_ms": ColumnRole.METADATA,
+            "label_end_time_ms": ColumnRole.METADATA,
+            "universe_version": ColumnRole.METADATA,
+            "feature_version": ColumnRole.METADATA,
+            "execution_lag_bars": ColumnRole.METADATA,
+            "dataset_schema_version": ColumnRole.METADATA,
+        },
+    )
+
+
+__all__ = [
+    "RESEARCH_DATASET_SCHEMA_V2",
+    "ColumnRole",
+    "DatasetSchema",
+    "research_dataset_schema",
+]

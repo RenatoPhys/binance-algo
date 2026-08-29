@@ -24,9 +24,13 @@ from binance_algo.research.features.base import (
     FeatureDefinition,
     FeatureStatus,
 )
+from binance_algo.research.features.clock_phase import ClockPhaseBundle
+from binance_algo.research.features.flow import FlowBundle
 from binance_algo.research.features.funding import FundingBundle
 from binance_algo.research.features.microstructure import MicrostructureBundle
 from binance_algo.research.features.momentum import ReturnsMomentumBundle
+from binance_algo.research.features.pair_state import PairStateBundle
+from binance_algo.research.features.path_state import PathStateBundle
 from binance_algo.research.features.volatility import VolatilityBundle
 from binance_algo.research.features.volume import VolumeBundle
 
@@ -189,6 +193,10 @@ PHASE3_BUNDLE_REGISTRY = FeatureBundleRegistry(
         VolumeBundle(),
         MicrostructureBundle(),
         FundingBundle(),
+        ClockPhaseBundle(),
+        FlowBundle(),
+        PathStateBundle(),
+        PairStateBundle(),
     )
 )
 PHASE3_FEATURE_REGISTRY = FeatureRegistry(
@@ -196,6 +204,15 @@ PHASE3_FEATURE_REGISTRY = FeatureRegistry(
 )
 PHASE3_FEATURE_SET_PATH = (
     Path(__file__).resolve().parents[4] / "configs" / "feature_sets" / "phase3_baseline.yaml"
+)
+ALPHA_REBOOT_FEATURE_SET_PATH = (
+    Path(__file__).resolve().parents[4] / "configs" / "feature_sets" / "alpha_reboot_v1.yaml"
+)
+BUILTIN_FEATURE_SET_PATHS = MappingProxyType(
+    {
+        "phase3_baseline_features:v1": PHASE3_FEATURE_SET_PATH,
+        "alpha_reboot_features:v1": ALPHA_REBOOT_FEATURE_SET_PATH,
+    }
 )
 
 
@@ -282,7 +299,34 @@ def phase3_feature_plan(config: ResearchConfig) -> ResolvedFeaturePlan:
     )
 
 
+def builtin_feature_plan(
+    name: str,
+    version: str,
+    *,
+    config: ResearchConfig,
+) -> ResolvedFeaturePlan:
+    """Resolve one explicitly registered feature-set declaration by identity."""
+
+    normalized_version = version if version.startswith("v") else f"v{version}"
+    identifier = f"{name}:{normalized_version}"
+    try:
+        path = BUILTIN_FEATURE_SET_PATHS[identifier]
+    except KeyError as exc:
+        raise ResearchError(f"unsupported feature set: {identifier}") from exc
+    plan = resolve_feature_plan(load_feature_set_declaration(path), config=config)
+    if plan.feature_set.feature_set_id != identifier:
+        raise ResearchError(f"feature-set file identity differs from registry key: {identifier}")
+    return plan
+
+
+def alpha_reboot_feature_plan(config: ResearchConfig) -> ResolvedFeaturePlan:
+    return builtin_feature_plan("alpha_reboot_features", "v1", config=config)
+
+
 PHASE3_FEATURE_NAMES = tuple(load_feature_set_declaration(PHASE3_FEATURE_SET_PATH).outputs)
+ALPHA_REBOOT_FEATURE_NAMES = tuple(
+    load_feature_set_declaration(ALPHA_REBOOT_FEATURE_SET_PATH).outputs
+)
 
 
 def compute_feature_plan(
@@ -326,7 +370,14 @@ def phase3_feature_set(config: ResearchConfig) -> FeatureSetSpec:
     return phase3_feature_plan(config).feature_set
 
 
+def alpha_reboot_feature_set(config: ResearchConfig) -> FeatureSetSpec:
+    return alpha_reboot_feature_plan(config).feature_set
+
+
 __all__ = [
+    "ALPHA_REBOOT_FEATURE_NAMES",
+    "ALPHA_REBOOT_FEATURE_SET_PATH",
+    "BUILTIN_FEATURE_SET_PATHS",
     "PHASE3_BUNDLE_REGISTRY",
     "PHASE3_FEATURE_NAMES",
     "PHASE3_FEATURE_REGISTRY",
@@ -338,6 +389,9 @@ __all__ = [
     "FeatureSetSpec",
     "ResolvedFeatureBundle",
     "ResolvedFeaturePlan",
+    "alpha_reboot_feature_plan",
+    "alpha_reboot_feature_set",
+    "builtin_feature_plan",
     "compute_feature_plan",
     "load_feature_set_declaration",
     "phase3_feature_plan",

@@ -1,0 +1,16 @@
+wave_id: alpha_reboot_wave1
+research_context: development_seen
+maximum_total_trials: 18
+campaigns:
+  - configs/experiments/quarter_hour_flow_development.yaml
+  - configs/experiments/flow_absorption_reversal_development.yaml
+  - configs/experiments/volatility_compression_breakout_development.yaml
+  - configs/experiments/pair_spread_reversion_development.yaml
+champion:
+  run_id: 967f7815499e18393930a76802fe5fe2a475c39703a18e321c2cd879cc7cbf37
+  strategy: carry_multi_horizon:v1
+  portfolio: buffered_three_sleeve_neutral:v1
+  portfolio_weights:
+    carry_weight: 0.60
+    fast_strength_weight: 0.30
+    slow_strength_weight: 0.10
