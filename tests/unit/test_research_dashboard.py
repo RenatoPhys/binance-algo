@@ -6,8 +6,9 @@ from pathlib import Path
 import orjson
 
 from binance_algo.config import load_settings
-from binance_algo.research.dashboard import build_research_dashboard
+from binance_algo.research.dashboard import build_research_dashboard, render_dashboard_html
 from binance_algo.research.experiments.models import (
+    ArtifactPolicy,
     CodeFingerprint,
     DatasetIdentity,
     ExperimentSpec,
@@ -91,7 +92,7 @@ def _experiment(hypothesis_id: str) -> ExperimentSpec:
             source_tree_sha256=None,
             provenance_quality=ProvenanceQuality.GIT_CLEAN,
         ),
-        artifact_policy="summary",
+        artifact_policy=ArtifactPolicy.SUMMARY,
     )
 
 
@@ -120,10 +121,19 @@ def test_dashboard_empty_store_is_deterministic(tmp_path: Path) -> None:
         "experiments": 0,
         "failures": 0,
         "hypotheses": 0,
+        "portfolios": 0,
         "successes": 0,
     }
+    assert orjson.loads(snapshot_bytes)["schema_version"] == 2
     assert b"Nenhuma campanha registrada" in html_bytes
     assert b"Nenhum experimento registrado" in html_bytes
+    assert b"Strategy shortlist" in html_bytes
+    assert b"P&amp;L and drawdown" in html_bytes
+    assert b"Diversification" in html_bytes
+    assert b"Operations" in html_bytes
+    assert b"Stability and risk" in html_bytes
+    assert b"http://" not in html_bytes
+    assert b"https://" not in html_bytes
 
 
 def test_dashboard_preserves_failures_negative_results_links_and_escaping(
@@ -227,3 +237,181 @@ def test_dashboard_preserves_failures_negative_results_links_and_escaping(
     assert "<script>alert('failed')</script>" not in html_text
     assert "&lt;script&gt;alert(&#x27;failed&#x27;)&lt;/script&gt;" in html_text
     assert "-12.5000%" in html_text
+
+
+def test_invalid_portfolio_file_does_not_hide_registry_catalog(tmp_path: Path) -> None:
+    store = ResearchStore(tmp_path / "research.sqlite3")
+    portfolio_file = tmp_path / "portfolios.yaml"
+    portfolio_file.write_text(
+        "schema_version: 1\nportfolios:\n  - portfolio_id: invalid\n"
+        "    title: Invalid\n    description: Synthetic invalid portfolio\n"
+        "    components:\n      - experiment_id: missing\n        label: Missing\n"
+        "        capital_weight: 1.0\n",
+        encoding="utf-8",
+    )
+
+    result = build_research_dashboard(
+        store=store,
+        reports_root=tmp_path / "reports",
+        data_root=tmp_path / "data",
+        portfolio_file=portfolio_file,
+    )
+    snapshot = orjson.loads(result.snapshot_path.read_bytes())
+    html_text = result.index_path.read_text(encoding="utf-8")
+
+    assert snapshot["schema_version"] == 2
+    assert snapshot["totals"]["experiments"] == 0
+    assert snapshot["totals"]["portfolios"] == 1
+    assert snapshot["portfolios"][0]["status"] == "INVALID"
+    assert "unknown experiment: missing" in snapshot["portfolios"][0]["errors"][0]
+    assert "Invalid portfolio" in html_text
+    assert "Nenhuma campanha registrada" in html_text
+
+
+def test_valid_portfolio_html_renders_all_analytical_sections_and_escapes_labels() -> None:
+    unsafe_label = '<img src=x onerror="alert(1)">'
+    common_metrics = {
+        "total_return": -0.01,
+        "annualized_return": -0.02,
+        "sharpe": -0.5,
+        "max_drawdown": -0.03,
+        "calmar": -0.7,
+        "turnover": 1.2,
+        "trading_fees": 0.001,
+        "spread_cost": 0.001,
+        "slippage_cost": 0.001,
+        "average_gross_exposure": 0.2,
+        "maximum_gross_exposure": 0.3,
+    }
+    portfolio = {
+        "portfolio_id": "valid",
+        "title": "Valid portfolio",
+        "description": "Negative fixture",
+        "status": "VALID",
+        "warnings": ["unsafe </script> warning"],
+        "errors": [],
+        "metrics": {
+            **common_metrics,
+            "rebalance_events": 2,
+            "trade_legs": 3,
+            "netting_savings": 0.001,
+            "effective_independent_strategies": 1.0,
+        },
+        "alignment": {
+            "start_time_ms": 1_700_000_000_000,
+            "end_time_ms": 1_700_086_400_000,
+            "periods": 2,
+            "policy": "strict",
+            "compatibility_group": "a" * 64,
+        },
+        "components": [
+            {
+                "label": unsafe_label,
+                "capital_weight": 1.0,
+                "experiment_id": "experiment",
+                "run_id": "run",
+                "validation_profile": "full",
+                "research_stage": "DISCOVERY",
+                "dataset_id": "dataset",
+                "code_fingerprint": {"git_commit": "b" * 40, "git_dirty": False},
+                "artifact_verified": True,
+                "positions_available": False,
+                "stress": {},
+            }
+        ],
+        "source_runs": [
+            {
+                "experiment_id": "experiment",
+                "run_id": "run",
+                "result_digest": "c" * 64,
+                "artifact_checksums": {"oos_curve": "d" * 64},
+            }
+        ],
+        "sleeve_metrics": common_metrics,
+        "netted_metrics": common_metrics,
+        "chart_series": {
+            "daily": [
+                {
+                    "date": "2023-11-14",
+                    "netted_equity": 1.0,
+                    "sleeve_equity": 1.0,
+                    "drawdown": 0.0,
+                    "netted_cumulative_turnover": 0.5,
+                    "sleeve_cumulative_turnover": 0.6,
+                    "components": {unsafe_label: 1.0},
+                },
+                {
+                    "date": "2023-11-15",
+                    "netted_equity": 0.99,
+                    "sleeve_equity": 0.98,
+                    "drawdown": -0.01,
+                    "netted_cumulative_turnover": 1.0,
+                    "sleeve_cumulative_turnover": 1.2,
+                    "components": {unsafe_label: 0.97},
+                },
+            ],
+            "rolling": {},
+        },
+        "component_attribution": [],
+        "correlations": {
+            "labels": [unsafe_label],
+            "daily_net": {"values": [[1.0]], "observations": [[2]]},
+            "active_only": {"values": [[1.0]], "observations": [[2]]},
+        },
+        "position_similarity": {
+            "labels": [unsafe_label],
+            "matrix": [[1.0]],
+            "pairs": [],
+        },
+        "trading": {
+            "by_symbol": [],
+            "by_side": [],
+            "weekday_hour_utc": [],
+            "largest_events": [],
+        },
+        "monthly_metrics": [],
+        "fold_metrics": [],
+        "regime_metrics": [],
+        "drawdown_episodes": [],
+        "symbol_attribution": [],
+        "concentration": {
+            "capital_weight_hhi": 1.0,
+            "maximum_component_weight": 1.0,
+            "maximum_absolute_symbol_weight": 0.2,
+            "activity_hhi_by_symbol": 1.0,
+            "top_activity_symbol": None,
+            "top_activity_share": 0.0,
+            "top_pnl_symbol": None,
+            "top_pnl_share": 0.0,
+            "volume_participation": None,
+        },
+    }
+    html_text = render_dashboard_html(
+        {
+            "totals": {
+                "hypotheses": 0,
+                "campaigns": 0,
+                "experiments": 0,
+                "successes": 0,
+                "failures": 0,
+                "portfolios": 1,
+            },
+            "hypotheses": [],
+            "campaigns": [],
+            "strategy_shortlist": [],
+            "portfolios": [portfolio],
+        }
+    )
+
+    assert unsafe_label not in html_text
+    assert "&lt;img src=x onerror=&quot;alert(1)&quot;&gt;" in html_text
+    assert "unsafe &lt;/script&gt; warning" in html_text
+    assert "Sleeve versus netted accounting" in html_text
+    assert "Daily net-return correlation" in html_text
+    assert "Simulated traded weight by weekday x hour UTC" in html_text
+    assert "Date (UTC)" in html_text
+    assert "Equity index" in html_text
+    assert "2023-11-14" in html_text
+    assert ">-1.1%</text>" in html_text
+    assert "http://" not in html_text
+    assert "https://" not in html_text

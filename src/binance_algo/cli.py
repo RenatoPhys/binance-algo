@@ -234,6 +234,15 @@ def research_dashboard_build(
         bool,
         typer.Option("--open", help="Open the generated dashboard in the default browser."),
     ] = False,
+    portfolio_file: Annotated[
+        Path | None,
+        typer.Option(
+            "--portfolio-file",
+            help="Optional strict YAML declaration of strategy portfolios.",
+            exists=True,
+            dir_okay=False,
+        ),
+    ] = None,
 ) -> None:
     """Build deterministic JSON and a self-contained offline HTML dashboard."""
 
@@ -244,6 +253,7 @@ def research_dashboard_build(
             store=ResearchStore(settings.research_db_path),
             reports_root=settings.reports_root,
             data_root=settings.data_root,
+            portfolio_file=portfolio_file,
         )
     except BinanceAlgoError as exc:
         _fail(exc)
