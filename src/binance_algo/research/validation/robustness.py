@@ -316,10 +316,13 @@ def _aligned_return_matrix(
     return np.column_stack(columns), None
 
 
-def _effective_strategy_count(matrix: np.ndarray[Any, np.dtype[np.float64]]) -> float:
+def effective_strategy_count(matrix: np.ndarray[Any, np.dtype[np.float64]]) -> float:
+    """Return the correlation-spectrum participation ratio used by robustness reports."""
+
     if matrix.shape[1] == 1:
         return 1.0
-    correlation = np.corrcoef(matrix, rowvar=False)
+    with np.errstate(invalid="ignore", divide="ignore"):
+        correlation = np.corrcoef(matrix, rowvar=False)
     correlation = np.nan_to_num(correlation, nan=0.0, posinf=0.0, neginf=0.0)
     np.fill_diagonal(correlation, 1.0)
     eigenvalues = np.clip(np.linalg.eigvalsh(correlation), 0.0, None)
@@ -431,7 +434,7 @@ def build_campaign_robustness(
         periods_per_year=periods_per_year,
     )
     pbo = probability_of_backtest_overfitting(matrix)
-    effective = _effective_strategy_count(matrix)
+    effective = effective_strategy_count(matrix)
     directory = (
         reports_root.resolve() / "research_campaigns" / f"campaign_id={campaign.campaign_id[:24]}"
     )
@@ -512,5 +515,6 @@ __all__ = [
     "RobustnessStatus",
     "TrialRobustness",
     "build_campaign_robustness",
+    "effective_strategy_count",
     "parameter_neighborhood",
 ]

@@ -6,7 +6,6 @@ import hashlib
 import math
 from collections.abc import Mapping, Sequence
 from dataclasses import asdict, dataclass
-from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -23,13 +22,14 @@ from binance_algo.research.contracts import (
     TrainingDataset,
     ValidationProfile,
 )
+from binance_algo.research.costs import configured_cost_model, explicit_cost_rates
 from binance_algo.research.datasets.views import build_feature_view, build_target_view
 from binance_algo.research.panel import WORKER_DATASET_CACHE, PanelData
+from binance_algo.research.performance import HOURS_PER_YEAR, calculate_return_statistics
 from binance_algo.research.portfolio.base import PanelPortfolioPolicy, PortfolioPolicy
 from binance_algo.research.strategies.base import PanelFittedStrategy, PanelStrategy, Strategy
 from binance_algo.research.visualization import render_pnl_svg
 
-HOURS_PER_YEAR = 24 * 365
 ACCOUNTING_FEATURE_FIELDS = ("rolling_beta",)
 ACCOUNTING_OUTCOME_FIELDS = (
     "future_return_1h",
@@ -215,14 +215,6 @@ def _long_value_matrix(
     return np.asarray(panel.features[value_column], dtype=np.float64)
 
 
-def _fee_schedule_covers(config: ResearchConfig, execution_time_ms: int) -> bool:
-    event_date = datetime.fromtimestamp(execution_time_ms / 1_000, tz=UTC).date()
-    schedule = config.fee_schedule
-    return event_date >= schedule.effective_from and (
-        schedule.effective_to is None or event_date <= schedule.effective_to
-    )
-
-
 def _run_fold(
     train: pl.DataFrame,
     test: pl.DataFrame,
@@ -323,14 +315,15 @@ def _run_fold(
     fee_matrix = np.empty_like(targets)
     spread_matrix = np.empty_like(targets)
     slippage_matrix = np.empty_like(targets)
-    fee_rate = float(config.fee_schedule.taker_fee_rate) * cost_multiplier
-    half_spread_rate = float(config.spread_bps) / 20_000 * cost_multiplier
-    slippage_rate = float(config.slippage_bps) / 10_000 * cost_multiplier
+    cost_model = configured_cost_model(config)
     capital = float(config.initial_capital_usdt)
     for period, decision_time in enumerate(times):
         execution_time = int(arrays["execution_time_ms"][period, 0])
-        if not _fee_schedule_covers(config, execution_time):
-            raise ResearchError(f"fee schedule does not cover execution time {execution_time}")
+        cost_rates = explicit_cost_rates(
+            cost_model,
+            execution_time,
+            multiplier=cost_multiplier,
+        )
         weights = targets[period]
         rebalances = weights - previous
         trades = np.abs(rebalances)
@@ -339,9 +332,9 @@ def _run_fold(
         turnover = float(np.sum(trades))
         price_contributions = weights * arrays["future_return_1h"][period]
         funding_contributions = -weights * arrays["outcome_funding_rate_1h"][period]
-        allocated_fees = trades * fee_rate
-        allocated_spread = trades * half_spread_rate
-        allocated_slippage = trades * slippage_rate
+        allocated_fees = trades * cost_rates.fee_rate
+        allocated_spread = trades * cost_rates.half_spread_rate
+        allocated_slippage = trades * cost_rates.slippage_rate
         previous_weights[period] = previous
         trade_weights[period] = trades
         price_contribution_matrix[period] = price_contributions
@@ -351,9 +344,9 @@ def _run_fold(
         slippage_matrix[period] = allocated_slippage
         price_pnl = float(np.dot(weights, arrays["future_return_1h"][period]))
         funding_pnl = float(-np.dot(weights, arrays["outcome_funding_rate_1h"][period]))
-        trading_fees = turnover * fee_rate
-        spread_cost = turnover * half_spread_rate
-        slippage_cost = turnover * slippage_rate
+        trading_fees = turnover * cost_rates.fee_rate
+        spread_cost = turnover * cost_rates.half_spread_rate
+        slippage_cost = turnover * cost_rates.slippage_rate
         net_return = price_pnl + funding_pnl - trading_fees - spread_cost - slippage_cost
         accounting_error = net_return - (
             price_pnl + funding_pnl - trading_fees - spread_cost - slippage_cost
@@ -451,23 +444,16 @@ def calculate_metrics(curve: pl.DataFrame) -> PerformanceMetrics:
     if curve.is_empty():
         raise ResearchError("cannot calculate metrics for an empty curve")
     returns = np.asarray(curve["net_return"].to_numpy(), dtype=np.float64)
-    equity = np.cumprod(1 + returns)
-    peaks = np.maximum.accumulate(equity)
-    drawdowns = equity / peaks - 1
-    mean = float(np.mean(returns))
-    standard_deviation = float(np.std(returns, ddof=1)) if len(returns) > 1 else 0.0
-    annualized_volatility = standard_deviation * math.sqrt(HOURS_PER_YEAR)
-    sharpe = mean / standard_deviation * math.sqrt(HOURS_PER_YEAR) if standard_deviation else 0.0
-    annualized_return = float(math.expm1(np.mean(np.log1p(returns)) * HOURS_PER_YEAR))
+    statistics = calculate_return_statistics(returns)
     turnover = float(curve["turnover"].sum())
     return PerformanceMetrics(
-        periods=len(returns),
-        total_return=float(equity[-1] - 1),
-        annualized_return=annualized_return,
-        annualized_volatility=annualized_volatility,
-        sharpe=sharpe,
-        max_drawdown=float(np.min(drawdowns)),
-        positive_period_fraction=float(np.mean(returns > 0)),
+        periods=statistics.periods,
+        total_return=statistics.total_return,
+        annualized_return=statistics.annualized_return,
+        annualized_volatility=statistics.annualized_volatility,
+        sharpe=statistics.sharpe,
+        max_drawdown=statistics.max_drawdown,
+        positive_period_fraction=statistics.positive_period_fraction,
         price_pnl=float(curve["price_pnl"].sum()),
         funding_pnl=float(curve["funding_pnl"].sum()),
         trading_fees=float(curve["trading_fees"].sum()),
