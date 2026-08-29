@@ -1265,6 +1265,15 @@ class ResearchStore:
             raise ResearchStoreError(f"cannot read successful run for {identifier}: {exc}") from exc
         return self._run_from_row(row) if row is not None else None
 
+    def list_successful_runs(self, identifier: str) -> tuple[ExperimentRunRecord, ...]:
+        """List successful attempts in deterministic creation/attempt order."""
+
+        return tuple(
+            run
+            for run in self.list_runs(experiment_id_value=identifier)
+            if run.status is RunStatus.SUCCEEDED
+        )
+
     def list_artifacts(self, run_id: str) -> tuple[ResearchArtifactRecord, ...]:
         try:
             with closing(self._connect()) as connection:

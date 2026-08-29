@@ -99,6 +99,12 @@ from binance_algo.research.experiments.runner import (
     phase3_baseline_hypothesis,
 )
 from binance_algo.research.experiments.store import ResearchStore
+from binance_algo.research.strategy_portfolio.inventory import (
+    write_strategy_portfolio_inventory,
+)
+from binance_algo.research.strategy_portfolio.validation import (
+    validate_portfolio_declarations,
+)
 from binance_algo.research.validation.robustness import build_campaign_robustness
 
 app = typer.Typer(help="Auditable Binance USD-M Futures public-data foundation.")
@@ -118,6 +124,7 @@ research_ablation_app = typer.Typer(help="Evaluate contextual feature ablations.
 research_promote_app = typer.Typer(help="Apply auditable research promotion gates.")
 research_candidate_app = typer.Typer(help="Generate candidate assessments in campaign context.")
 research_dashboard_app = typer.Typer(help="Build the offline research dashboard.")
+research_portfolio_app = typer.Typer(help="Validate declared portfolios of research strategies.")
 app.add_typer(exchange_info_app, name="exchange-info")
 app.add_typer(universe_app, name="universe")
 app.add_typer(backfill_app, name="backfill")
@@ -134,6 +141,7 @@ research_app.add_typer(research_ablation_app, name="ablation")
 research_app.add_typer(research_promote_app, name="promote")
 research_app.add_typer(research_candidate_app, name="candidate")
 research_app.add_typer(research_dashboard_app, name="dashboard")
+research_app.add_typer(research_portfolio_app, name="portfolio")
 console = Console()
 
 
@@ -243,6 +251,83 @@ def research_dashboard_build(
         webbrowser.open(result.index_path.resolve().as_uri())
     console.print(
         f"Research dashboard built:\nHTML: {result.index_path}\nSnapshot: {result.snapshot_path}"
+    )
+
+
+@research_portfolio_app.command("validate")
+def research_portfolio_validate(
+    ctx: typer.Context,
+    portfolio_file: Annotated[
+        Path,
+        typer.Option(
+            "--file",
+            help="Strict YAML declaration of strategy portfolios.",
+            exists=True,
+            dir_okay=False,
+        ),
+    ],
+) -> None:
+    """Validate portfolio schema, runs, artifacts, alignment, and compatibility."""
+
+    try:
+        settings = _settings(ctx)
+        _configure(settings)
+        rows = validate_portfolio_declarations(
+            store=ResearchStore(settings.research_db_path),
+            data_root=settings.data_root,
+            portfolio_file=portfolio_file,
+        )
+    except BinanceAlgoError as exc:
+        _fail(exc)
+    table = Table(title="research strategy portfolio validation")
+    for column in (
+        "portfolio",
+        "component",
+        "experiment / run",
+        "artifacts",
+        "compatibility group",
+        "window",
+        "weight",
+        "accounting",
+        "error / warning",
+    ):
+        table.add_column(column)
+    for row in rows:
+        table.add_row(
+            row.portfolio_id,
+            row.component_label,
+            f"{row.experiment_id}\n{row.run_id or '—'}",
+            row.artifact_status,
+            row.compatibility_group or "—",
+            row.window,
+            str(row.capital_weight),
+            row.accounting_mode,
+            row.message or "—",
+        )
+    console.print(table)
+    if not rows or any(not row.valid for row in rows):
+        raise typer.Exit(code=1)
+
+
+@research_portfolio_app.command("inventory")
+def research_portfolio_inventory(ctx: typer.Context) -> None:
+    """Audit local successful runs and write the non-versioned portfolio inventory."""
+
+    try:
+        settings = _settings(ctx)
+        _configure(settings)
+        json_path, markdown_path, inventory = write_strategy_portfolio_inventory(
+            store=ResearchStore(settings.research_db_path),
+            data_root=settings.data_root,
+            reports_root=settings.reports_root,
+        )
+    except BinanceAlgoError as exc:
+        _fail(exc)
+    console.print(
+        "Research strategy portfolio inventory written:\n"
+        f"JSON: {json_path}\nMarkdown: {markdown_path}\n"
+        f"Verified: {inventory['verified_experiments']} / "
+        f"{inventory['successful_experiments']}"
     )
 
 
